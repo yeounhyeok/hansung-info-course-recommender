@@ -60,11 +60,14 @@ python3 skills/hansung-info/scripts/major_curriculum.py --term 20261 --major Y03
 python3 skills/hansung-info/scripts/major_curriculum.py --scan-terms --major Y030 --only-required
 ```
 
-### 5) 이번 학기 추천(학년 위주 + 충돌 방지 + 시간표 마크다운 출력)
+### 5) 이번 학기 추천(학년 위주 + 충돌 방지 + 시간표 출력)
 
 ```bash
 # 2학년 과목 위주로 전공을 채우고, 남는 학점은 교양으로 채우는 플랜(권장)
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md
+
+# 개인시간표조회 스타일(웹처럼 보기): HTML 파일 생성
+python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format html --out timetable.html
 
 # 전공+교양까지 포함해서 18학점 자동 채우기
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md --fill-ge
@@ -73,7 +76,7 @@ python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --allow-other-years --format md
 ```
 
-> 참고: 시간 라벨은 기본값(1교시=09:00, 교시당 1시간)으로 표시됩니다. 학교 공식 시간표와 다를 수 있어요.
+> 참고: 시간 라벨/충돌 계산은 운혁 님 규칙대로 **`:00`/`:30` 경계 + `n`/`nM` 표기 해석** 기준으로 표시됩니다.
 
 ### 6) 졸업 로드맵(전공필수는 '체크리스트'가 아니라 '학점 기준'으로 플래닝)
 
@@ -88,6 +91,21 @@ python3 skills/hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20
 ```bash
 python3 skills/hansung-info/scripts/dept_grad_requirements.py
 ```
+
+## Period/time mapping (Hansung) — important
+
+운혁 님 규칙(현업용 단순화): **모든 과목은 `:00` 또는 `:30` 경계로만 시작/종료**한다고 가정합니다.
+
+- 표기 규칙
+  1) `n` 으로 시작/끝나면 → **n에 해당하는 시각 정시(:00)** 에 시작/종료
+  2) `nM` 으로 시작하면 → **n 시각 + 30분(:30)** 에 시작
+     `nM` 으로 끝나면 → **n 시각 + 30분(:30)** 에 종료
+
+- 시간 경계(예시)
+  - `2` = 10:00 경계
+  - `2M` = 10:30 경계(시작), 또는 11:00 경계(끝)
+
+이 규칙은 **시간표 충돌 검사**에 직접 영향이 있어요.
 
 ## References
 

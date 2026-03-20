@@ -101,20 +101,24 @@ class Slot:
     day_en: str
     start_period: int
     end_period: int
-    suffix: str = ""  # e.g. "M". Kept for display.
+    start_suffix: str = ""  # e.g. "M" (break slot)
+    end_suffix: str = ""  # e.g. "M" (include break after end_period)
 
     @property
     def day_ko(self) -> str:
         return DAY_EN_TO_KO.get(self.day_en, self.day_en)
 
 
-def _iter_korean_day_spans(text: str) -> Iterable[Tuple[str, int, int, str]]:
-    """Yield (day_kr, start, end, suffix) from a classroom string.
+def _iter_korean_day_spans(text: str) -> Iterable[Tuple[str, int, str, int, str]]:
+    """Yield (day_kr, start_period, start_suffix, end_period, end_suffix) from a classroom string.
 
-    Handles patterns like:
-    - "금6~8M"
-    - "월2M~3M"
-    - "수5M~6M"
+    Hansung uses period numbers for class time, and "M" to indicate the *break slot*.
+    Examples:
+    - "금6~8M"      (include the break after 8교시)
+    - "월2M~3M"     (from break after 2교시 to break after 3교시)
+    - "수5M~6M"     (from break after 5교시 to break after 6교시)
+    - "월2M~3"      (from break after 2교시 to end of 3교시)
+    - "월2~3"       (pure class periods)
     """
 
     if not text:
@@ -125,18 +129,27 @@ def _iter_korean_day_spans(text: str) -> Iterable[Tuple[str, int, int, str]]:
         if not m:
             continue
         day_kr = m.group(1)
-        start = int(m.group(2))
-        end = int(m.group(4))
-        suffix = (m.group(5) or m.group(3) or "").strip()
-        yield day_kr, start, end, suffix
+        start_p = int(m.group(2))
+        start_suf = (m.group(3) or "").strip()
+        end_p = int(m.group(4))
+        end_suf = (m.group(5) or "").strip()
+        yield day_kr, start_p, start_suf, end_p, end_suf
 
 
 def parse_slots(classroom: str) -> List[Slot]:
     slots: List[Slot] = []
-    for day_kr, start, end, suffix in _iter_korean_day_spans(classroom):
+    for day_kr, start_p, start_suf, end_p, end_suf in _iter_korean_day_spans(classroom):
         day_en = DAY_KO_TO_EN.get(day_kr, day_kr)
-        if start > 0 and end > 0 and end >= start:
-            slots.append(Slot(day_en=day_en, start_period=start, end_period=end, suffix=suffix))
+        if start_p > 0 and end_p > 0 and end_p >= start_p:
+            slots.append(
+                Slot(
+                    day_en=day_en,
+                    start_period=start_p,
+                    end_period=end_p,
+                    start_suffix=start_suf,
+                    end_suffix=end_suf,
+                )
+            )
     return slots
 
 
@@ -155,10 +168,82 @@ class Course:
         return parse_slots(self.classroom)
 
 
+def _parse_hhmm(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _period_hour(period: int) -> int:
+    """Map Hansung period number to an hour boundary.
+
+    User rule: treat all boundaries as :00 / :30 only (ignore 50-min model).
+    We use a simple boundary mapping: 1 -> 09:00, 2 -> 10:00, ...
+
+    This matches the two rules:
+    - n: boundary at hour of period n
+    - nM: boundary at +30 minutes (start) or next hour (end)
+    """
+
+    return 8 + period
+
+
+# 30-minute boundary mapping
+# We render the timetable on a 30-min grid. The key is: boundaries depend on day-pattern.
+# - Tue/Fri: simple hour boundaries (n->(n+8):00, nM->(n+8):30)
+# - Mon/Wed/Thu: Hansung's 75-min pattern, snapped to 30-min boundaries (provided by user)
+MWT_BOUNDARIES: Dict[Tuple[int, str], str] = {
+    # class starts
+    (1, ""): "09:00",
+    (3, ""): "10:30",
+    (4, ""): "12:00",
+    (6, ""): "13:30",
+    (7, ""): "15:00",
+    (9, ""): "16:30",
+    # aliases observed in 종정시 strings
+    (2, "M"): "10:30",
+    (5, "M"): "13:30",
+    (8, ""): "16:30",
+    (8, "M"): "16:30",
+    # ends/break boundaries
+    (1, "M"): "10:30",
+    (3, "M"): "12:00",
+    (4, "M"): "13:30",
+    (6, "M"): "15:00",
+    (7, "M"): "16:30",
+    (9, "M"): "18:00",
+}
+
+
+def _boundary_minutes(day_en: str, period: int, suffix: str) -> int:
+    suf = (suffix or "").upper()
+
+    # Mon/Wed/Thu special mapping
+    if day_en in {"Mon", "Wed", "Thu"}:
+        hhmm = MWT_BOUNDARIES.get((period, suf))
+        if hhmm:
+            return _parse_hhmm(hhmm)
+        # fallback to simple mapping if unknown marker shows up
+
+    # Tue/Fri (and fallback): n -> (n+8):00, nM -> (n+8):30
+    base = _period_hour(period) * 60
+    return base + (30 if suf == "M" else 0)
+
+
+def slot_to_minutes(s: Slot) -> Tuple[int, int]:
+    """Convert Slot to (start_min, end_min) minutes in day on a 30-min grid."""
+
+    start_min = _boundary_minutes(s.day_en, s.start_period, s.start_suffix)
+    end_min = _boundary_minutes(s.day_en, s.end_period, s.end_suffix)
+    return start_min, end_min
+
+
 def _overlap(a: Slot, b: Slot) -> bool:
     if a.day_en != b.day_en:
         return False
-    return not (a.end_period < b.start_period or b.end_period < a.start_period)
+    a0, a1 = slot_to_minutes(a)
+    b0, b1 = slot_to_minutes(b)
+    # Treat as half-open intervals.
+    return (a0 < b1) and (b0 < a1)
 
 
 def conflict(a: Course, b: Course) -> bool:
@@ -229,20 +314,39 @@ def course_days(c: Course) -> List[str]:
     return days
 
 
-def period_to_time_label(period: int) -> str:
-    """Convert period number to a time label.
+# Period boundary labels for display (per user rule: everything ends at :00 or :30)
+# We treat period numbers as hour boundaries: 1->09:00, 2->10:00, ...
+PERIOD_TIME_SLOTS: Dict[int, Dict[str, str]] = {
+    p: {"start": f"{8+p:02d}:00", "end": f"{9+p:02d}:00"} for p in range(1, 15)
+}
 
-    NOTE: Hansung official period-to-time mapping can vary.
-    We use a simple, readable default: 1교시=09:00, period=+1h.
-    """
 
+def period_time(period: int) -> Tuple[str, str]:
+    """Return (start, end) time label for a given Hansung period."""
+
+    slot = PERIOD_TIME_SLOTS.get(period)
+    if slot:
+        return slot["start"], slot["end"]
+
+    # Fallback: keep the old behavior (1교시=09:00, +1h) for out-of-range periods.
     hour = 9 + (period - 1)
-    return f"{hour:02d}:00"
+    return f"{hour:02d}:00", f"{(hour + 1):02d}:00"
+
+
+def period_to_time_label(period: int) -> str:
+    start, _end = period_time(period)
+    return start
 
 
 def slot_to_timerange(s: Slot) -> str:
-    start = period_to_time_label(s.start_period)
-    end = period_to_time_label(s.end_period + 1)
+    start, _ = period_time(s.start_period)
+    _, end = period_time(s.end_period)
+    start_min, end_min = slot_to_minutes(s)
+    # If M modifies boundaries, show exact minutes.
+    if (s.start_suffix or "").upper() == "M" or (s.end_suffix or "").upper() == "M":
+        sh, sm = divmod(start_min, 60)
+        eh, em = divmod(end_min, 60)
+        return f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}"
     return f"{start}~{end}"
 
 
@@ -287,150 +391,150 @@ def render_markdown_timetable(picked: List[Course]) -> str:
     sep = "|---|---|---|---|---|---|"
     rows = [header, sep]
     for p in range(p_min, p_max + 1):
-        time_label = f"{period_to_time_label(p)}~{period_to_time_label(p+1)}"
+        start, end = period_time(p)
+        time_label = f"{start}~{end}"
         cells = [grid.get((p, d), "") for d in days]
         rows.append("| " + " | ".join([time_label] + cells) + " |")
     return "\n".join(rows)
 
 
-def render_html_timetable(*, term: str, major: str, target: int, picked: List[Course]) -> str:
-    """Render a standalone HTML page for the timetable.
+def render_html_timetable(picked: List[Course]) -> str:
+    """Render a simple HTML weekly timetable similar to the Hansung personal timetable view.
 
-    Notes:
-    - Uses a simple period->time mapping (1교시=09:00, +1h) for readability.
-    - Shows a weekly grid (Mon..Fri) and a picked course list.
+    - 30-minute grid on the left.
+    - Mon..Fri columns.
+    - Each offline class becomes a positioned block with its exact (minute) time range.
+
+    Note: This is a self-contained HTML (inline CSS) so it can be hosted anywhere as a static file.
     """
 
     days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    days_ko = {"Mon": "월", "Tue": "화", "Wed": "수", "Thu": "목", "Fri": "금"}
+    day_labels = {"Mon": "월", "Tue": "화", "Wed": "수", "Thu": "목", "Fri": "금"}
 
-    # Determine grid range
-    periods: List[int] = []
+    # Build events
+    events: List[Dict[str, object]] = []
     for c in picked:
-        for s in c.slots:
-            for p in range(s.start_period, s.end_period + 1):
-                periods.append(p)
-    if periods:
-        p_min, p_max = min(periods), max(periods)
-    else:
-        p_min, p_max = 1, 12
-
-    # Build cell -> list of course labels
-    cell: Dict[Tuple[int, str], List[str]] = {}
-
-    def label(c: Course) -> str:
-        # keep compact
-        return re.sub(r"\s+", " ", c.name).strip()
-
-    for c in picked:
+        if not c.slots:
+            continue
         for s in c.slots:
             if s.day_en not in days:
                 continue
-            for p in range(s.start_period, s.end_period + 1):
-                cell.setdefault((p, s.day_en), []).append(label(c))
+            start_min, end_min = slot_to_minutes(s)
+            events.append(
+                {
+                    "day": s.day_en,
+                    "start": start_min,
+                    "end": end_min,
+                    "title": c.name,
+                    "meta": f"{slot_to_timerange(s)} | {c.prof}".strip(" |"),
+                }
+            )
 
-    # Course list HTML
-    li = []
-    for c in picked:
-        meta = []
-        if c.isu:
-            meta.append(c.isu)
-        if c.credit:
-            meta.append(f"{c.credit}학점")
-        if c.grade:
-            meta.append(f"{c.grade}학년")
-        if c.prof:
-            meta.append(c.prof)
-        if c.classroom:
-            meta.append(c.classroom)
-        li.append(f"<li><b>{label(c)}</b><div class='meta'>{' · '.join(meta)}</div></li>")
+    if not events:
+        return "<p>(표시할 오프라인 시간표 슬롯이 없습니다. 온라인 강좌만 선택된 상태일 수 있습니다.)</p>"
 
-    # Grid rows
-    grid_rows = []
-    for p in range(p_min, p_max + 1):
-        t = f"{period_to_time_label(p)}~{period_to_time_label(p+1)}"
-        tcell = f"<div class='time'>{t}</div>"
-        cols = []
-        for d in days:
-            items = cell.get((p, d), [])
-            if not items:
-                cols.append("<div class='cell empty'></div>")
-            else:
-                # de-dup within cell
-                uniq = []
-                for x in items:
-                    if x not in uniq:
-                        uniq.append(x)
-                cols.append("<div class='cell'><div class='course'>" + "<br>".join(uniq) + "</div></div>")
-        grid_rows.append("<div class='row'>" + tcell + "".join(cols) + "</div>")
+    # Visual range
+    day_start = _parse_hhmm("08:00")
+    day_end = _parse_hhmm("22:30")
 
-    title = f"{term} {major} 추천 시간표"
+    # Expand range to fit events
+    day_start = min(day_start, min(e["start"] for e in events))
+    day_end = max(day_end, max(e["end"] for e in events))
+
+    # Pixel scale
+    px_per_min = 1.2  # 50min ~ 60px
+    total_h = int((day_end - day_start) * px_per_min)
+
+    def fmt(mins: int) -> str:
+        h, m = divmod(mins, 60)
+        return f"{h:02d}:{m:02d}"
+
+    # Time ticks every 30 minutes
+    ticks = list(range((day_start // 30) * 30, day_end + 1, 30))
+
+    # Layout constants
+    time_col_w = 72
+    day_col_w = 210
+    header_h = 36
+
+    # Render blocks
+    blocks: List[str] = []
+    for e in events:
+        top = int((int(e["start"]) - day_start) * px_per_min) + header_h
+        height = max(18, int((int(e["end"]) - int(e["start"])) * px_per_min) - 2)
+        day_idx = days.index(str(e["day"]))
+        # Align block to the column borders (flush with right edge)
+        left = time_col_w + day_idx * day_col_w + 1
+        width = day_col_w - 2
+        blocks.append(
+            "\n".join(
+                [
+                    f"<div class='event' style='top:{top}px;left:{left}px;height:{height}px;width:{width}px'>",
+                    f"  <div class='event-time'>{fmt(int(e['start']))}~{fmt(int(e['end']))}</div>",
+                    f"  <div class='event-title'>{e['title']}</div>",
+                    (f"  <div class='event-meta'>{e['meta']}</div>" if e.get("meta") else ""),
+                    "</div>",
+                ]
+            )
+        )
+
+    # Grid lines
+    grid_lines: List[str] = []
+    for t in ticks:
+        y = int((t - day_start) * px_per_min) + header_h
+        label = fmt(t)
+        mm = t % 60
+        cls = "hline hour" if mm == 0 else "hline half"
+        grid_lines.append(f"<div class='{cls}' style='top:{y}px'></div>")
+        grid_lines.append(f"<div class='tlabel' style='top:{y-8}px'>{label}</div>")
+
+    # Day headers
+    day_headers = "".join(
+        [
+            f"<div class='dayhead' style='left:{time_col_w + i*day_col_w}px;width:{day_col_w}px'>{day_labels[d]}</div>"
+            for i, d in enumerate(days)
+        ]
+    )
+
     html = f"""<!doctype html>
 <html lang='ko'>
 <head>
-  <meta charset='utf-8' />
-  <meta name='viewport' content='width=device-width, initial-scale=1' />
-  <title>{title}</title>
+  <meta charset='utf-8'/>
+  <meta name='viewport' content='width=device-width, initial-scale=1'/>
+  <title>Hansung Timetable</title>
   <style>
-    :root {{ --bg:#0b0f17; --panel:#111827; --muted:#94a3b8; --line:#243042; --text:#e5e7eb; --accent:#60a5fa; }}
-    body {{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans KR', Arial; background:var(--bg); color:var(--text); }}
-    .wrap {{ max-width: 1100px; margin: 0 auto; padding: 22px; }}
-    h1 {{ margin:0 0 8px; font-size: 20px; }}
-    .sub {{ color: var(--muted); font-size: 13px; margin-bottom: 18px; }}
-    .grid {{ border:1px solid var(--line); border-radius: 10px; overflow:hidden; background:var(--panel); }}
-    .head {{ display:grid; grid-template-columns: 120px repeat(5, 1fr); background:rgba(255,255,255,0.03); border-bottom:1px solid var(--line); }}
-    .head div {{ padding:10px 12px; font-weight:600; color:var(--muted); }}
-    .row {{ display:grid; grid-template-columns: 120px repeat(5, 1fr); border-bottom:1px solid var(--line); }}
-    .row:last-child {{ border-bottom:none; }}
-    .time {{ padding:10px 12px; color:var(--muted); font-variant-numeric: tabular-nums; border-right:1px solid var(--line); }}
-    .cell {{ padding:8px 10px; border-right:1px solid var(--line); min-height:40px; }}
-    .cell:last-child {{ border-right:none; }}
-    .cell.empty {{ background: rgba(0,0,0,0.06); }}
-    .course {{ background: rgba(96,165,250,0.12); border: 1px solid rgba(96,165,250,0.25); padding:6px 8px; border-radius: 8px; line-height:1.25; }}
-    .cols {{ display:grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }}
-    .card {{ border:1px solid var(--line); border-radius: 10px; background:var(--panel); padding: 12px 14px; }}
-    .card h2 {{ margin:0 0 10px; font-size: 14px; color: var(--muted); }}
-    ul {{ margin:0; padding-left: 18px; }}
-    li {{ margin: 8px 0; }}
-    .meta {{ margin-top:4px; color: var(--muted); font-size: 12px; }}
-    .note {{ margin-top: 10px; color: var(--muted); font-size: 12px; }}
-    a {{ color: var(--accent); }}
+    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; margin: 16px; }}
+    .wrap {{ position: relative; width: {time_col_w + day_col_w*5}px; border: 1px solid #ddd; overflow: hidden; }}
+    .header {{ position: sticky; top: 0; background: #fff; border-bottom: 1px solid #ddd; height: {header_h}px; z-index: 5; }}
+    .timehead {{ position:absolute; left:0; top:0; width:{time_col_w}px; height:{header_h}px; border-right:1px solid #eee; }}
+    .dayhead {{ position:absolute; top:0; height:{header_h}px; display:flex; align-items:center; justify-content:center; border-right:1px solid #eee; font-weight: 700; text-align:center; }}
+    .grid {{ position: relative; height: {total_h + header_h}px; }}
+    .hline {{ position:absolute; left:0; right:0; background:#f1f1f1; z-index: 1; }}
+    .hline.half {{ height: 1px; opacity: 0.9; }}
+    .hline.hour {{ height: 2px; background:#d9d9d9; }}
+    .tlabel {{ position:absolute; left:0; width:{time_col_w-8}px; text-align:center; font-size: 12px; color:#555; padding-right: 8px; z-index: 2; }}
+    .vline {{ position:absolute; top:{header_h}px; bottom:0; width:1px; background:#eee; z-index: 1; }}
+    .event {{ position:absolute; background: #E7F0FF; border: 1px solid #9EC1FF; border-radius: 6px; padding: 6px 8px; box-sizing: border-box; z-index: 3; overflow: hidden; text-align: center; display:flex; flex-direction:column; justify-content:center; }}
+    .event-time {{ font-size: 11px; color: #1f3b7a; margin-bottom: 2px; }}
+    .event-title {{ font-size: 13px; font-weight: 800; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+    .event-meta {{ font-size: 11px; color: #334; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
   </style>
 </head>
 <body>
   <div class='wrap'>
-    <h1>{title}</h1>
-    <div class='sub'>목표 {target}학점 · 생성 시각표시는 기본 매핑(1교시=09:00, 교시당 1시간) 기반입니다.</div>
-
-    <div class='grid'>
-      <div class='head'>
-        <div>시간</div>
-        <div>{days_ko['Mon']}</div>
-        <div>{days_ko['Tue']}</div>
-        <div>{days_ko['Wed']}</div>
-        <div>{days_ko['Thu']}</div>
-        <div>{days_ko['Fri']}</div>
-      </div>
-      {''.join(grid_rows)}
+    <div class='header'>
+      <div class='timehead'></div>
+      {day_headers}
     </div>
-
-    <div class='cols'>
-      <div class='card'>
-        <h2>선택 과목</h2>
-        <ul>
-          {''.join(li)}
-        </ul>
-        <div class='note'>※ 온라인강좌 시간(예: 1.5시간)은 오프라인 그리드에 표시되지 않을 수 있습니다.</div>
-      </div>
-      <div class='card'>
-        <h2>공유</h2>
-        <div class='note'>이 페이지는 스크립트 실행 결과로 생성된 정적 HTML입니다.</div>
-        <div class='note'>GitHub Pages로 호스팅하면 링크 하나로 공유할 수 있습니다.</div>
-      </div>
+    <div class='grid'>
+      {''.join(grid_lines)}
+      {''.join([f"<div class='vline' style='left:{time_col_w + i*day_col_w}px'></div>" for i in range(6)])}
+      {''.join(blocks)}
     </div>
   </div>
 </body>
-</html>"""
+</html>
+"""
     return html
 
 
@@ -447,18 +551,14 @@ def main() -> None:
     )
     ap.add_argument("--max-days", type=int, default=3, help="Prefer schedules within N on-campus days (default: 3)")
     ap.add_argument("--day-penalty", type=int, default=15, help="Penalty when adding a new on-campus day (default: 15)")
-    ap.add_argument("--format", choices=["md", "ascii", "both"], default="md", help="Timetable output format")
+    ap.add_argument("--format", choices=["md", "ascii", "both", "html"], default="md", help="Timetable output format")
+    ap.add_argument("--out", help="Write output to a file instead of stdout (useful for --format html)")
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
     ap.add_argument(
         "--fill-ge",
         action="store_true",
         help="If set, fill remaining credits with 교양(교필/선필교/일교/일선) offerings (default: off)",
-    )
-    ap.add_argument(
-        "--out-html",
-        default="",
-        help="Write a standalone HTML timetable page to this path (e.g., docs/index.html)",
     )
     args = ap.parse_args()
 
@@ -543,6 +643,7 @@ def main() -> None:
     picked: List[Course] = []
     total = 0
     used_days: List[str] = []
+    picked_online: List[Course] = []
 
     def incremental_cost(cand: Course) -> int:
         new_days = [d for d in course_days(cand) if d not in used_days]
@@ -570,6 +671,8 @@ def main() -> None:
 
             picked.append(cand)
             total += cand.credit
+            if not cand.slots:
+                picked_online.append(cand)
             for d in course_days(cand):
                 if d not in used_days:
                     used_days.append(d)
@@ -644,6 +747,21 @@ def main() -> None:
             extra += f" | {c.prof}"
         lines.append(f"- {c.isu} {c.name} ({c.credit}학점){extra}")
 
+    if picked_online:
+        lines.append("")
+        lines.append("## 🌐 온라인/비대면(시간 미표기) 과목")
+        lines.append("- 종정시 응답에서 시간 슬롯 파싱이 안 되는 과목은 여기로 분리합니다(충돌 검사 제외).")
+        for c in picked_online:
+            extra = ""
+            if c.grade:
+                extra += f" | {c.grade}"
+            if c.prof:
+                extra += f" | {c.prof}"
+            # classroom may contain hints like 'e-러닝' etc.
+            if c.classroom:
+                extra += f" | {c.classroom}"
+            lines.append(f"- {c.isu} {c.name} ({c.credit}학점){extra}")
+
     lines.append("")
     lines.append(f"- 예상 등교 요일: {', '.join(DAY_EN_TO_KO.get(d, d) for d in used_days) if used_days else '(온라인만)'}")
 
@@ -673,7 +791,7 @@ def main() -> None:
             lines.append("## 🗓️ 시간표(마크다운, 시간 라벨)")
             lines.append(render_markdown_timetable(picked))
             lines.append("")
-            lines.append("- 시간 라벨은 기본값(1교시=09:00, 교시당 1시간)으로 표시됩니다. 학교 공식 시간과 다를 수 있어요.")
+            lines.append("- 시간표는 30분 그리드로 렌더링하며, 월/수/목은 75분 패턴을 30분 경계로 스냅한 테이블을 사용합니다.")
 
         if args.format in {"ascii", "both"}:
             lines.append("")
@@ -682,18 +800,22 @@ def main() -> None:
             lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
             lines.append("```")
 
-    # Optional HTML output (for GitHub Pages / sharing)
-    if args.out_html:
-        out = pathlib.Path(args.out_html)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            render_html_timetable(term=args.term, major=args.major, target=args.target, picked=picked),
-            encoding="utf-8",
-        )
-        lines.append("")
-        lines.append(f"- HTML 출력: {out}")
+        if args.format == "html":
+            lines.append("")
+            lines.append("## 🗓️ 시간표(HTML)")
+            lines.append("- `--format html --out timetable.html` 로 파일로 저장해서 브라우저로 열어보세요")
 
-    print("\n".join(lines).strip() + "\n")
+    output_text = "\n".join(lines).strip() + "\n"
+
+    # HTML timetable mode: emit ONLY the HTML document (no markdown header/list).
+    if args.format == "html" and not args.no_timetable:
+        output_text = render_html_timetable(picked)
+
+    if args.out:
+        pathlib.Path(args.out).write_text(output_text, encoding="utf-8")
+    else:
+        print(output_text)
+
     client.close()
 
 
@@ -721,13 +843,36 @@ def _render_ascii_timetable(courses: List[Course], days: Optional[List[str]] = N
                 else:
                     grid[key] = label
 
-    col_w = 8
-    header = " " * 4 + "".join(d.center(col_w) for d in days)
+    def _wcswidth(text: str) -> int:
+        try:
+            from wcwidth import wcswidth as _wcs
+
+            w = _wcs(text)
+            return w if w >= 0 else len(text)
+        except Exception:
+            import unicodedata
+
+            w = 0
+            for ch in text:
+                w += 2 if unicodedata.east_asian_width(ch) in {"W", "F"} else 1
+            return w
+
+    def _center(text: str, width: int) -> str:
+        w = _wcswidth(text)
+        if w >= width:
+            return text
+        pad = width - w
+        left = pad // 2
+        right = pad - left
+        return (" " * left) + text + (" " * right)
+
+    col_w = 10
+    header = " " * 4 + "".join(_center(d, col_w) for d in days)
     lines = [header]
     for p in range(1, max_period + 1):
         row = f"{p:>2}  "
         for d in days:
-            row += (grid.get((p, d), "·")).center(col_w)
+            row += _center(grid.get((p, d), "·"), col_w)
         lines.append(row)
     return "\n".join(lines)
 
