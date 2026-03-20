@@ -659,6 +659,7 @@ def main() -> None:
     )
     client.get(INDEX)
     raw = fetch_offerings(client, term=args.term, code=args.major)
+    raw_count = len(raw)
 
     courses: List[Course] = []
     for r in raw:
@@ -685,14 +686,17 @@ def main() -> None:
     for c in courses:
         dedup.setdefault(c.code, c)
     courses = list(dedup.values())
+    dedup_count = len(courses)
 
     # Filter to known buckets (major + GE)
+    before_bucket = len(courses)
     courses = [
         c
         for c in courses
         if c.isu
         in {"전필", "전지", "전공필수", "전공지정", "전기", "전선", "교필", "선필교", "일교", "일선"}
     ]
+    bucket_count = len(courses)
 
     # Year handling
     def year_of(c: Course) -> Optional[int]:
@@ -817,6 +821,18 @@ def main() -> None:
 
     # Output
     lines: List[str] = [f"# 📚 이번 학기 추천 ({args.term}, {args.major})", ""]
+
+    # Explainable rationale (what data + what constraints were applied)
+    lines.append("## 🔎 근거(데이터/제약/니즈 반영)")
+    lines.append(f"- 데이터 소스: 종정시 개설과목 API(siganpyo_aui_data.jsp history) 조회")
+    lines.append(f"- 원본 행 수: {raw_count} → 과목코드 기준 중복 제거 후: {dedup_count} → 분류(전필/전기/전선/교필/선필교/일교/일선) 필터 후: {bucket_count}")
+    lines.append(f"- 사용자 니즈(옵션): target={args.target}학점, {args.year}학년 우선, max-days={args.max_days}, fill-ge={'on' if args.fill_ge else 'off'}, allow-other-years={'on' if args.allow_other_years else 'off'}")
+    lines.append("- 추천 로직: (1) 전필/전기/전선 우선순위 점수화 (2) 시간표 충돌 제외 (3) 등교 요일 추가 패널티로 요일 수 최소화")
+    lines.append(
+        "- 주의: 개인의 '미이수 전필/교양요건 충족 여부'는 현재 자동 판정하지 않습니다(개설과목 기반 추천)."
+    )
+    lines.append("")
+
     lines.append(f"- 목표 학점: {args.target} (현재 추천 합: {total})")
     lines.append(f"- 우선: {args.year}학년 과목 위주 + 전필/전기/전선 우선순위")
     if not args.allow_other_years:
