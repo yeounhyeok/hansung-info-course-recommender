@@ -620,6 +620,10 @@ def main() -> None:
         "--publish-dir",
         help="Override publish dir (otherwise uses persisted config under ~/.config/hansung-info-course-recommender/publish.json)",
     )
+    ap.add_argument(
+        "--publish-base-url",
+        help="If set, also print clickable URLs (e.g. http://localhost:8282).",
+    )
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
     ap.add_argument(
@@ -893,6 +897,13 @@ def main() -> None:
         publish_root = published_path.parents[2] if len(published_path.parents) >= 3 else published_path.parent
         print(f"\n[publish] wrote: {published_path}")
         print(f"[publish] latest: {publish_root / 'latest' / 'index.html'}")
+
+        if args.publish_base_url:
+            base = args.publish_base_url.rstrip("/")
+            # We always publish both a unique slug path and a stable latest path.
+            slug = published_path.parent.name
+            print(f"[publish] url (latest): {base}/latest/")
+            print(f"[publish] url (this):   {base}/timetables/{slug}/")
 
     client.close()
 
