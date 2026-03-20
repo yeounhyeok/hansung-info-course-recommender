@@ -60,6 +60,17 @@
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --fill-ge --out-html docs/index.html
 ```
 
+### 로컬/서버에서 정적 HTML 서빙하기(Docker nginx)
+
+이미지 빌드해서 `docs/` 폴더를 nginx로 서빙합니다.
+
+```bash
+docker compose up --build
+# open: http://localhost:8080/
+```
+
+빠른 반복(생성할 때마다 rebuild 없이 즉시 반영)하려면 `docker-compose.yml`의 `volumes:`를 켜세요.
+
 ### 0) 설치
 
 ```bash
