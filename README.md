@@ -52,17 +52,13 @@
 
 ## 실행 예시
 
-### 시간표를 보기 좋게 공유하기(정적 HTML)
+### 시간표를 보기 좋게 보기(정적 HTML)
 
-추천 결과를 `docs/index.html`로 뽑아두면, GitHub Pages로 **링크 공유**가 가능합니다.
-
-```bash
-python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --fill-ge --out-html docs/index.html
-```
+추천 결과는 `--format html --publish`로 정적 서빙 폴더에 쌓고, `latest/` 링크로 바로 보는 방식을 권장합니다.
 
 ### 로컬/서버에서 정적 HTML 서빙하기(Docker nginx)
 
-이미지 빌드해서 `docs/` 폴더를 nginx로 서빙합니다.
+이미지 빌드해서 `static/` 폴더(또는 볼륨 마운트)를 nginx로 서빙합니다.
 
 ```bash
 docker compose up --build

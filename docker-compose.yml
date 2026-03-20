@@ -5,4 +5,4 @@ services:
       - "8080:80"
     # If you want hot-reload without rebuilding the image, uncomment volume mount:
     # volumes:
-    #   - ./docs:/usr/share/nginx/html:ro
+    #   - ./static:/usr/share/nginx/html:ro
