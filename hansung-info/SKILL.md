@@ -60,13 +60,17 @@ python3 skills/hansung-info/scripts/major_curriculum.py --term 20261 --major Y03
 python3 skills/hansung-info/scripts/major_curriculum.py --scan-terms --major Y030 --only-required
 ```
 
-### 5) 이번 학기 추천(전필 우선, 시간표 충돌 방지 + ASCII 시간표 출력)
+### 5) 이번 학기 추천(학년 위주 + 충돌 방지 + 시간표 마크다운 출력)
 
 ```bash
-python3 skills/hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18
-# 시간표(ASCII) 숨기기
-python3 skills/hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --no-grid
+# 2학년 과목 위주로 전공을 채우고, 남는 학점은 교양으로 채우는 플랜(권장)
+python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md
+
+# 타 학년 전공까지 섞어서 18학점 꽉 채우고 싶으면
+python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --allow-other-years --format md
 ```
+
+> 참고: 시간 라벨은 기본값(1교시=09:00, 교시당 1시간)으로 표시됩니다. 학교 공식 시간표와 다를 수 있어요.
 
 ### 6) 졸업 로드맵(전공필수는 '체크리스트'가 아니라 '학점 기준'으로 플래닝)
 
