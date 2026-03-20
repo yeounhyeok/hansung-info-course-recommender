@@ -3,6 +3,12 @@
 이 프로젝트는 **OpenClaw만 사용해서 만든 테스트용 프로젝트**입니다.
 처음 아이디어부터 현재 형태(스킬/스크립트/자동화)까지 정리하는 데 **약 2시간 30분** 정도 걸렸습니다.
 
+## 공개/사용에 대한 안내(중요)
+- 이 레포는 **누구나 바로 실행**할 수 있도록 공개합니다.
+- 다만 학교 시스템/정책(이용약관)이나 트래픽 정책에 따라 **차단/변경**이 발생할 수 있습니다.
+- 과도한 호출은 지양하시고, 본인 계정으로만 사용하세요.
+- 문제가 생기면 레포는 **즉시 비공개 전환 또는 삭제**할 수 있습니다.
+
 한성대학교 종합정보시스템(종정시, info.hansung.ac.kr)에서 **조회 가능한 범위(개설과목/교육과정)** 를 기반으로
 - 이번 학기 개설 과목 조회
 - 전공필수(전필) 후보(교육과정) 수집
@@ -44,6 +50,23 @@
 
 ## 실행 예시
 
+### 0) 설치
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 1) 환경변수 설정
+
+`~/.openclaw/.env` 또는 쉘 환경변수로 아래를 준비합니다.
+
+- `HANSUNG_INFO_ID`
+- `HANSUNG_INFO_PASSWORD`
+
+### 2) 실행
+
 ```bash
 # (1) 로그인 쿠키 갱신
 set -a && source ~/.openclaw/.env && set +a
@@ -57,4 +80,8 @@ python3 hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --m
 ```
 
 ## Requirements
+- Python 3.10+
 - `httpx` (see `requirements.txt`)
+
+## License
+- MIT (see `LICENSE`)
