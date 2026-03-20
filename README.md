@@ -7,6 +7,16 @@
 - 원칙: **read-only** (수강신청/변경 같은 write 작업 없음)
 - 설치/세팅/사용법: `hansung-info/SKILL.md` (OpenClaw 스킬 문서)
 
+## 설치(가장 간단)
+
+OpenClaw 워크스페이스 기준으로, 아래처럼 **폴더명을 `hansung-info`로 클론**하면 바로 스킬로 인식됩니다.
+
+```bash
+cd ~/.openclaw/workspace/skills
+git clone https://github.com/yeounhyeok/hansung-info-course-recommender.git hansung-info
+# 이후 세팅/사용은 hansung-info/SKILL.md 그대로 따라가면 됩니다.
+```
+
 ## 파이프라인(아주 간단)
 1) 로그인해서 쿠키 갱신 → `secrets/hansung_info_storage.json`
 2) 종정시 개설과목 API에서 이번 학기 개설 과목 목록 수집

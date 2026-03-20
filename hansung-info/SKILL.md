@@ -16,6 +16,16 @@ description: Read-only automation for Hansung Univ 종정시(info.hansung.ac.kr)
 
 ---
 
+## 설치(레포 URL만으로 끝내기)
+
+```bash
+cd ~/.openclaw/workspace/skills
+# 폴더명을 hansung-info 로 맞추면 OpenClaw가 스킬로 바로 잡습니다.
+git clone https://github.com/yeounhyeok/hansung-info-course-recommender.git hansung-info
+```
+
+> 이제 `~/.openclaw/workspace/skills/hansung-info/SKILL.md`만 보고 그대로 따라가면 세팅됩니다.
+
 ## 설치 → 세팅 → 사용(가장 짧은 루트)
 
 ### 1) 설치(venv)
