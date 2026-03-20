@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import secrets
@@ -472,14 +473,20 @@ def render_markdown_timetable(picked: List[Course]) -> str:
     return "\n".join(rows)
 
 
-def _load_publish_config_interactive() -> Dict[str, str]:
-    """Load publish config, or ask once and persist.
+def _load_publish_config() -> Dict[str, str]:
+    """Load publish config and persist sane defaults (non-interactive).
 
-    First-time UX:
-    - Ask for publish_dir (where nginx serves static HTML)
-    - Ask for base_url (so we can print clickable links)
+    Goal: first-run users should be able to run `--publish` without being prompted.
 
-    Stored at: ~/.config/hansung-info-course-recommender/publish.json
+    Priority order:
+    - CLI flags (handled in main)
+    - Environment variables:
+      - HANSUNG_INFO_PUBLISH_DIR
+      - HANSUNG_INFO_PUBLISH_BASE_URL
+    - Persisted config: ~/.config/hansung-info-course-recommender/publish.json
+    - Defaults:
+      - publish_dir: ~/docker_volumes/hansung-info-static/html
+      - base_url: http://localhost:8282
     """
 
     cfg: Dict[str, str] = {}
@@ -489,23 +496,16 @@ def _load_publish_config_interactive() -> Dict[str, str]:
         except Exception:
             cfg = {}
 
-    default_dir = str(DEFAULT_PUBLISH_DIR)
-    publish_dir = (cfg.get("publish_dir") or "").strip()
-    base_url = (cfg.get("base_url") or "").strip()
-
-    if not publish_dir:
-        try:
-            ans = input(f"[publish] 정적 HTML을 저장할 폴더를 입력하세요 (default: {default_dir})\n> ").strip()
-        except EOFError:
-            ans = ""
-        publish_dir = ans or default_dir
-
-    if not base_url:
-        try:
-            ans = input("[publish] 브라우저로 볼 base URL을 입력하세요 (예: http://localhost:8282)\n> ").strip()
-        except EOFError:
-            ans = ""
-        base_url = ans
+    publish_dir = (
+        (os.getenv("HANSUNG_INFO_PUBLISH_DIR") or "").strip()
+        or (cfg.get("publish_dir") or "").strip()
+        or str(DEFAULT_PUBLISH_DIR)
+    )
+    base_url = (
+        (os.getenv("HANSUNG_INFO_PUBLISH_BASE_URL") or "").strip()
+        or (cfg.get("base_url") or "").strip()
+        or "http://localhost:8282"
+    )
 
     p = pathlib.Path(publish_dir).expanduser()
     p.mkdir(parents=True, exist_ok=True)
@@ -1046,13 +1046,12 @@ def main() -> None:
     if args.format == "html" and not args.no_timetable:
         output_text = render_html_timetable(picked)
         if args.publish:
+            cfg = _load_publish_config()
             if args.publish_dir:
                 publish_dir = pathlib.Path(args.publish_dir).expanduser()
-                base_url = args.publish_base_url
             else:
-                cfg = _load_publish_config_interactive()
                 publish_dir = pathlib.Path(cfg["publish_dir"]).expanduser()
-                base_url = args.publish_base_url or (cfg.get("base_url") or "")
+            base_url = args.publish_base_url or (cfg.get("base_url") or "")
 
             publish_dir.mkdir(parents=True, exist_ok=True)
             published_path = publish_html(output_text, publish_dir=publish_dir)
