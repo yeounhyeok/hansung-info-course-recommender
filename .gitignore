@@ -1,0 +1,10 @@
+# secrets/state
+secrets/
+*.json
+
+# python
+__pycache__/
+*.pyc
+
+# misc
+.DS_Store
