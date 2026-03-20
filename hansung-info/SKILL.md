@@ -1,127 +1,107 @@
 ---
 name: hansung-info
-description: Automate Hansung University portals (종합정보시스템 info.hansung.ac.kr) and AI응용학과 graduation/major requirements. Use when the user asks to fetch grades, enrolled semesters, curriculum/전공필수(전필) lists, 졸업요건 요약, or to build cron-based DM digests from 종정시/학과 졸업요건 페이지. Includes automatic login (no 2FA) + cookie refresh and HTTP-based extraction; can optionally use Playwright click automation.
+description: Read-only automation for Hansung Univ 종정시(info.hansung.ac.kr): login cookie refresh, offerings/curriculum fetch, and conflict-free course recommendations with copy-paste-friendly ASCII/Markdown timetable output.
 ---
 
-# Hansung Info (종정시) Automation
+# Hansung Info (종정시) — OpenClaw Skill
 
-## What this skill provides
+## 이 스킬이 하는 일(요약)
+- 종정시 **로그인 쿠키 갱신** (no 2FA 가정)
+- 이번 학기 **개설 과목(시간표) 조회**
+- 교육과정 기반 **전필 후보 풀** 조회
+- 목표 학점에 맞춰 **충돌 없는 추천 조합** 생성
+- 결과를 **텍스트(ASCII/Markdown) 시간표**로 출력 (디스코드/메모 복붙용)
 
-- **Auto login** to 종정시 (info.hansung.ac.kr) and refresh cookies.
-- **Grade summary** + credit-bucket summary (GPA/percentile/earned vs required).
-- **Major curriculum API extraction** for AI응용학과 (sjungong=`Y030`) including **전필 후보 과목 리스트**.
-- **Dept graduation requirements** page fetch (public Hansung site) and key bullets.
+> 원칙: **read-only**. 수강신청/변경 같은 write 작업은 하지 않습니다.
 
-## Security / guardrails
+---
 
-- Treat 종정시 credentials + cookies as secrets.
-- Store cookie state under `workspace/secrets/` (chmod 600) and keep it gitignored.
-- This skill is **read-only** automation. Do not perform write actions (수강신청/변경/제출).
+## 설치 → 세팅 → 사용(가장 짧은 루트)
 
-## Setup (env)
+### 1) 설치(venv)
 
-In `~/.openclaw/.env`:
-
-- `HANSUNG_INFO_ID`
-- `HANSUNG_INFO_PASSWORD`
-
-Optional (for DM send via OpenClaw):
-- none (uses `openclaw message send` directly)
-
-## Scripts
-
-### 1) Refresh login cookies
+스킬 폴더에서 venv를 만들고 의존성을 설치합니다.
 
 ```bash
-# 레포 루트에서 실행한다고 가정합니다.
-set -a && source ~/.openclaw/.env && set +a
-python3 hansung-info/scripts/login_refresh.py
+cd ~/.openclaw/workspace/skills/hansung-info
+bash openclaw/setup.sh
 ```
 
-Writes: `secrets/hansung_info_storage.json`
+### 2) 자격증명 세팅
 
-### 2) 성적 + 이수구분 요약
+`~/.openclaw/.env`에 아래 2개를 넣습니다.
 
 ```bash
-python3 hansung-info/scripts/grade_summary.py
+HANSUNG_INFO_ID=학번
+HANSUNG_INFO_PASSWORD='비밀번호'
 ```
 
-### 3) 전공/트랙 코드 목록(드롭다운) 조회
+권한 잠그기:
 
 ```bash
-# term(학기) 기준으로 종정시 드롭다운(sjungong) 옵션을 그대로 가져옵니다.
-python3 hansung-info/scripts/jungong_list.py --term 20261
-python3 hansung-info/scripts/jungong_list.py --term 20261 --format json --out .tmp/jungonglist_20261.json
+chmod 600 ~/.openclaw/.env
 ```
 
-### 4) 이번 학기 개설 과목(시간표) 조회
+### 3) 로그인 쿠키 갱신
 
 ```bash
-python3 hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030
-python3 hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030 --only-required
+cd ~/.openclaw/workspace/skills/hansung-info
+bash openclaw/login_refresh.sh
 ```
 
-### 5) AI응용학과(Y030) 전필 후보 리스트(교육과정/카탈로그)
+저장 위치:
+- `~/.openclaw/workspace/secrets/hansung_info_storage.json`
+
+### 4) 추천 + 시간표 출력(텍스트)
 
 ```bash
-python3 hansung-info/scripts/major_curriculum.py --term 20261 --major Y030
-python3 hansung-info/scripts/major_curriculum.py --scan-terms --major Y030 --only-required
+bash openclaw/recommend_this_term.sh \
+  --term 20261 --major Y030 --target 18 \
+  --year 2 --max-days 3 \
+  --format md --fill-ge
 ```
 
-### 6) 이번 학기 추천(학년 위주 + 충돌 방지 + 시간표 출력)
+- `--fill-ge`: 남는 학점을 교양으로 채워서 target을 맞춥니다.
+- `--allow-other-years`: 타 학년 전공까지 섞어 18학점 꽉 채우고 싶을 때.
+
+---
+
+## 출력 예시(복붙용 텍스트 시간표)
+
+```
+[20261 / Y030] 18학점 시간표 (등교: 월·수·목)
+
+월
+  10:30-12:00  오픈소스 HW (노광현)  미래관B107  [월2M~3M]
+  13:30-15:00  웹프로그래밍 (지준)   공학관407   [월5M~6M]
+
+수
+  13:30-15:00  디지털 논리 및 회로 (정성훈)  상상관705  [수5M~6M]
+  15:00-16:30  C프로그래밍 (정성훈)          상상관305  [수7~8]
+  17:00-18:30  인공지능 수학 (조혜경)        상상관306  [수8M~9M]
+
+목
+  16:30-18:00  디지털마케팅의 이해와 활용(캡스톤디자인) (이승준)  상상관703  [목8M~9M]
+```
+
+---
+
+## 개별 스크립트(고급)
+
+> 아래는 디버깅/확장용입니다. 평소엔 `openclaw/*.sh`만 써도 됩니다.
 
 ```bash
-# 2학년 과목 위주로 전공을 채우고, 남는 학점은 교양으로 채우는 플랜(권장)
-python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md
-
-# 개인시간표조회 스타일(웹처럼 보기): HTML 파일 생성
-python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format html --out timetable.html
-
-# (권장) 정적 서빙 폴더로 바로 publish + URL 출력
-# - 기본 base-url: http://localhost:8282
-# - 도메인이 있으면 환경변수로 고정: HANSUNG_INFO_PUBLISH_BASE_URL=https://daejja.yeoun.org
-# - publish dir도 필요하면 고정: HANSUNG_INFO_PUBLISH_DIR=~/docker_volumes/hansung-info-static/html
-python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 \
-  --format html --publish \
-  --publish-base-url https://daejja.yeoun.org
-
-# 전공+교양까지 포함해서 18학점 자동 채우기
-python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md --fill-ge
-
-# 타 학년 전공까지 섞어서 18학점 꽉 채우고 싶으면
-python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --allow-other-years --format md
+python3 scripts/login_refresh.py
+python3 scripts/timetable_offerings.py --term 20261 --major Y030
+python3 scripts/major_curriculum.py --term 20261 --major Y030
+python3 scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --format md
+python3 scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --required-credits 21
 ```
 
-> 참고: 시간 라벨/충돌 계산은 운혁 님 규칙대로 **`:00`/`:30` 경계 + `n`/`nM` 표기 해석** 기준으로 표시됩니다.
-
-### 7) 졸업 로드맵(전공필수는 '체크리스트'가 아니라 '학점 기준'으로 플래닝)
-
-```bash
-python3 hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030
-# 전공필수 목표 학점 조정
-python3 hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --required-credits 21
-```
-
-### 8) 학과 ‘추가 졸업요건’(공인영어/캡스톤/산학협력) 요약
-
-```bash
-python3 hansung-info/scripts/dept_grad_requirements.py
-```
-
-## Period/time mapping (Hansung) — important
-
-이 스킬은 **HTML 시간표를 30분 그리드로 렌더링**합니다.
-
-- 기본(화/금 및 fallback):
-  - `n` → `(n+8):00` 경계
-  - `nM` → `(n+8):30` 경계
-- 예외(월/수/목): 학교 시간표의 75분 패턴 때문에, 종정시 표기를 **30분 경계로 스냅한 매핑 테이블(MWT)** 을 사용합니다.
-  - 예: `월 2M~3M` → `10:30~12:00`
-  - 예: `수 7~8` → `15:00~16:30`
-
-즉, **같은 `n/nM`라도 요일에 따라 실제 슬롯이 달라질 수 있습니다.**
-(이 규칙은 충돌 검사에도 그대로 적용됩니다.)
+## 시간 매핑 규칙(충돌검사/표시 핵심)
+- 시간표는 **30분 그리드**로 렌더링합니다.
+- 월/수/목은 75분 패턴 때문에 종정시 표기(`n/nM`)를 30분 경계로 스냅한 매핑 테이블을 사용합니다.
+- 따라서 **같은 `n/nM`라도 요일에 따라 실제 시간이 달라질 수 있고**, 충돌검사도 이 규칙을 그대로 따릅니다.
 
 ## References
-
-- API endpoints / parsing notes: `references/endpoints.md`
+- `references/endpoints.md`
