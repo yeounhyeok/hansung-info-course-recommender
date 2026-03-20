@@ -50,9 +50,6 @@ INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
 BASE = "https://info.hansung.ac.kr/jsp_21/student/kyomu/"
 HISTORY = BASE + "siganpyo_aui_data.jsp"
 
-# Publish config for static HTML serving (e.g. docker volume mounted into nginx)
-PUBLISH_CFG = pathlib.Path.home() / ".config" / "hansung-info-course-recommender" / "publish.json"
-DEFAULT_PUBLISH_DIR = pathlib.Path.home() / "docker_volumes" / "hansung-info-static" / "html"
 
 
 def cookies_from_state() -> httpx.Cookies:
@@ -721,21 +718,8 @@ def main() -> None:
         default="",
         help="Prefer to keep lunch free; format HH:MM~HH:MM (example: 12:00~13:00). If set, any overlap is rejected.",
     )
-    ap.add_argument("--format", choices=["md", "ascii", "both", "html"], default="md", help="Timetable output format")
-    ap.add_argument("--out", help="Write output to a file instead of stdout (useful for --format html)")
-    ap.add_argument(
-        "--publish",
-        action="store_true",
-        help="If set with --format html, save the HTML into a preconfigured static directory (first run prompts).",
-    )
-    ap.add_argument(
-        "--publish-dir",
-        help="Override publish dir (otherwise uses persisted config under ~/.config/hansung-info-course-recommender/publish.json)",
-    )
-    ap.add_argument(
-        "--publish-base-url",
-        help="If set, also print clickable URLs (e.g. http://localhost:8282).",
-    )
+    ap.add_argument("--format", choices=["md", "ascii", "both"], default="md", help="Timetable output format")
+    ap.add_argument("--out", help="Write output to a file instead of stdout")
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
     ap.add_argument(
@@ -1034,52 +1018,13 @@ def main() -> None:
             lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
             lines.append("```")
 
-        if args.format == "html":
-            lines.append("")
-            lines.append("## 🗓️ 시간표(HTML)")
-            lines.append("- `--format html --out timetable.html` 로 파일로 저장해서 브라우저로 열어보세요")
 
     output_text = "\n".join(lines).strip() + "\n"
-
-    # HTML timetable mode: emit ONLY the HTML document (no markdown header/list).
-    published_path: Optional[pathlib.Path] = None
-    if args.format == "html" and not args.no_timetable:
-        output_text = render_html_timetable(picked)
-        if args.publish:
-            cfg = _load_publish_config()
-            if args.publish_dir:
-                publish_dir = pathlib.Path(args.publish_dir).expanduser()
-            else:
-                publish_dir = pathlib.Path(cfg["publish_dir"]).expanduser()
-            base_url = args.publish_base_url or (cfg.get("base_url") or "")
-
-            publish_dir.mkdir(parents=True, exist_ok=True)
-            published_path = publish_html(output_text, publish_dir=publish_dir)
-            # If base_url is available, print URLs even if --publish-base-url wasn't passed.
-            if base_url and not args.publish_base_url:
-                args.publish_base_url = base_url
 
     if args.out:
         pathlib.Path(args.out).write_text(output_text, encoding="utf-8")
     else:
         print(output_text)
-
-    if published_path is not None:
-        # Print paths for convenience (useful when the directory is volume-mounted into nginx).
-        publish_root = published_path.parents[2] if len(published_path.parents) >= 3 else published_path.parent
-        print(f"\n[publish] wrote: {published_path}")
-        print(f"[publish] latest: {publish_root / 'latest' / 'index.html'}")
-
-        if args.publish_base_url:
-            base = args.publish_base_url.strip()
-            if not base.startswith("http://") and not base.startswith("https://"):
-                # Default to https when scheme is omitted.
-                base = "https://" + base
-            base = base.rstrip("/")
-            # We always publish both a unique slug path and a stable latest path.
-            slug = published_path.parent.name
-            print(f"[publish] url (latest): {base}/latest/")
-            print(f"[publish] url (this):   {base}/timetables/{slug}/")
 
     client.close()
 
