@@ -33,9 +33,9 @@ Optional (for DM send via OpenClaw):
 ### 1) Refresh login cookies
 
 ```bash
-cd /home/ubuntu/.openclaw/workspace
-set -a && source /home/ubuntu/.openclaw/.env && set +a
-python3 skills/hansung-info/scripts/login_refresh.py
+# 레포 루트에서 실행한다고 가정합니다.
+set -a && source ~/.openclaw/.env && set +a
+python3 hansung-info/scripts/login_refresh.py
 ```
 
 Writes: `secrets/hansung_info_storage.json`
@@ -43,7 +43,7 @@ Writes: `secrets/hansung_info_storage.json`
 ### 2) 성적 + 이수구분 요약
 
 ```bash
-python3 skills/hansung-info/scripts/grade_summary.py
+python3 hansung-info/scripts/grade_summary.py
 ```
 
 ### 3) 전공/트랙 코드 목록(드롭다운) 조회
@@ -57,18 +57,18 @@ python3 hansung-info/scripts/jungong_list.py --term 20261 --format json --out .t
 ### 4) 이번 학기 개설 과목(시간표) 조회
 
 ```bash
-python3 skills/hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030
-python3 skills/hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030 --only-required
+python3 hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030
+python3 hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030 --only-required
 ```
 
-### 4) AI응용학과(Y030) 전필 후보 리스트(교육과정/카탈로그)
+### 5) AI응용학과(Y030) 전필 후보 리스트(교육과정/카탈로그)
 
 ```bash
-python3 skills/hansung-info/scripts/major_curriculum.py --term 20261 --major Y030
-python3 skills/hansung-info/scripts/major_curriculum.py --scan-terms --major Y030 --only-required
+python3 hansung-info/scripts/major_curriculum.py --term 20261 --major Y030
+python3 hansung-info/scripts/major_curriculum.py --scan-terms --major Y030 --only-required
 ```
 
-### 5) 이번 학기 추천(학년 위주 + 충돌 방지 + 시간표 출력)
+### 6) 이번 학기 추천(학년 위주 + 충돌 방지 + 시간표 출력)
 
 ```bash
 # 2학년 과목 위주로 전공을 채우고, 남는 학점은 교양으로 채우는 플랜(권장)
@@ -89,34 +89,33 @@ python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --
 
 > 참고: 시간 라벨/충돌 계산은 운혁 님 규칙대로 **`:00`/`:30` 경계 + `n`/`nM` 표기 해석** 기준으로 표시됩니다.
 
-### 6) 졸업 로드맵(전공필수는 '체크리스트'가 아니라 '학점 기준'으로 플래닝)
+### 7) 졸업 로드맵(전공필수는 '체크리스트'가 아니라 '학점 기준'으로 플래닝)
 
 ```bash
-python3 skills/hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030
+python3 hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030
 # 전공필수 목표 학점 조정
-python3 skills/hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --required-credits 21
+python3 hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --required-credits 21
 ```
 
-### 7) 학과 ‘추가 졸업요건’(공인영어/캡스톤/산학협력) 요약
+### 8) 학과 ‘추가 졸업요건’(공인영어/캡스톤/산학협력) 요약
 
 ```bash
-python3 skills/hansung-info/scripts/dept_grad_requirements.py
+python3 hansung-info/scripts/dept_grad_requirements.py
 ```
 
 ## Period/time mapping (Hansung) — important
 
-운혁 님 규칙(현업용 단순화): **모든 과목은 `:00` 또는 `:30` 경계로만 시작/종료**한다고 가정합니다.
+이 스킬은 **HTML 시간표를 30분 그리드로 렌더링**합니다.
 
-- 표기 규칙
-  1) `n` 으로 시작/끝나면 → **n에 해당하는 시각 정시(:00)** 에 시작/종료
-  2) `nM` 으로 시작하면 → **n 시각 + 30분(:30)** 에 시작
-     `nM` 으로 끝나면 → **n 시각 + 30분(:30)** 에 종료
+- 기본(화/금 및 fallback):
+  - `n` → `(n+8):00` 경계
+  - `nM` → `(n+8):30` 경계
+- 예외(월/수/목): 학교 시간표의 75분 패턴 때문에, 종정시 표기를 **30분 경계로 스냅한 매핑 테이블(MWT)** 을 사용합니다.
+  - 예: `월 2M~3M` → `10:30~12:00`
+  - 예: `수 7~8` → `15:00~16:30`
 
-- 시간 경계(예시)
-  - `2` = 10:00 경계
-  - `2M` = 10:30 경계(시작), 또는 11:00 경계(끝)
-
-이 규칙은 **시간표 충돌 검사**에 직접 영향이 있어요.
+즉, **같은 `n/nM`라도 요일에 따라 실제 슬롯이 달라질 수 있습니다.**
+(이 규칙은 충돌 검사에도 그대로 적용됩니다.)
 
 ## References
 

@@ -404,33 +404,50 @@ def render_markdown_timetable(picked: List[Course]) -> str:
     return "\n".join(rows)
 
 
-def _load_publish_dir_interactive() -> pathlib.Path:
-    """Load publish dir from config, or ask once and persist.
+def _load_publish_config_interactive() -> Dict[str, str]:
+    """Load publish config, or ask once and persist.
 
-    Designed for first-time users: if config is missing, we prompt for a directory.
+    First-time UX:
+    - Ask for publish_dir (where nginx serves static HTML)
+    - Ask for base_url (so we can print clickable links)
+
+    Stored at: ~/.config/hansung-info-course-recommender/publish.json
     """
 
+    cfg: Dict[str, str] = {}
     if PUBLISH_CFG.exists():
         try:
-            data = json.loads(PUBLISH_CFG.read_text(encoding="utf-8"))
-            p = pathlib.Path(data.get("publish_dir", "")).expanduser()
-            if str(p).strip():
-                return p
+            cfg = json.loads(PUBLISH_CFG.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            cfg = {}
 
-    # First run: prompt
-    default = str(DEFAULT_PUBLISH_DIR)
-    try:
-        ans = input(f"[publish] 정적 HTML을 저장할 폴더를 입력하세요 (default: {default})\n> ").strip()
-    except EOFError:
-        ans = ""
+    default_dir = str(DEFAULT_PUBLISH_DIR)
+    publish_dir = (cfg.get("publish_dir") or "").strip()
+    base_url = (cfg.get("base_url") or "").strip()
 
-    p = pathlib.Path(ans or default).expanduser()
+    if not publish_dir:
+        try:
+            ans = input(f"[publish] 정적 HTML을 저장할 폴더를 입력하세요 (default: {default_dir})\n> ").strip()
+        except EOFError:
+            ans = ""
+        publish_dir = ans or default_dir
+
+    if not base_url:
+        try:
+            ans = input("[publish] 브라우저로 볼 base URL을 입력하세요 (예: http://localhost:8282)\n> ").strip()
+        except EOFError:
+            ans = ""
+        base_url = ans
+
+    p = pathlib.Path(publish_dir).expanduser()
     p.mkdir(parents=True, exist_ok=True)
+
     PUBLISH_CFG.parent.mkdir(parents=True, exist_ok=True)
-    PUBLISH_CFG.write_text(json.dumps({"publish_dir": str(p)}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return p
+    PUBLISH_CFG.write_text(
+        json.dumps({"publish_dir": str(p), "base_url": base_url}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {"publish_dir": str(p), "base_url": base_url}
 
 
 def publish_html(html: str, *, publish_dir: pathlib.Path, slug: Optional[str] = None) -> pathlib.Path:
@@ -883,9 +900,19 @@ def main() -> None:
     if args.format == "html" and not args.no_timetable:
         output_text = render_html_timetable(picked)
         if args.publish:
-            publish_dir = pathlib.Path(args.publish_dir).expanduser() if args.publish_dir else _load_publish_dir_interactive()
+            if args.publish_dir:
+                publish_dir = pathlib.Path(args.publish_dir).expanduser()
+                base_url = args.publish_base_url
+            else:
+                cfg = _load_publish_config_interactive()
+                publish_dir = pathlib.Path(cfg["publish_dir"]).expanduser()
+                base_url = args.publish_base_url or (cfg.get("base_url") or "")
+
             publish_dir.mkdir(parents=True, exist_ok=True)
             published_path = publish_html(output_text, publish_dir=publish_dir)
+            # If base_url is available, print URLs even if --publish-base-url wasn't passed.
+            if base_url and not args.publish_base_url:
+                args.publish_base_url = base_url
 
     if args.out:
         pathlib.Path(args.out).write_text(output_text, encoding="utf-8")
