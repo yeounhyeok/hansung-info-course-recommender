@@ -279,6 +279,60 @@ def conflict(a: Course, b: Course) -> bool:
     return False
 
 
+def _course_duration_minutes(c: Course) -> int:
+    """Return max single-slot duration in minutes (0 if no slots)."""
+
+    durs: List[int] = []
+    for s in c.slots:
+        a0, a1 = slot_to_minutes(s)
+        durs.append(max(0, a1 - a0))
+    return max(durs) if durs else 0
+
+
+def needs_buffer(c: Course, *, practical_min: int = 180) -> bool:
+    """Heuristic: treat long blocks as practical classes.
+
+    Many studio/practical classes are 3~4 hours continuous.
+    We can't reliably detect '실기' from the API, so we use duration.
+    """
+
+    return _course_duration_minutes(c) >= practical_min
+
+
+def conflict_with_buffer(a: Course, b: Course, *, buffer_min: int, practical_min: int = 180) -> bool:
+    """Conflict check with extra buffer around practical (long) classes.
+
+    Rule:
+    - If neither is practical-like, fall back to strict overlap.
+    - If either is practical-like, expand its occupied interval by buffer_min
+      on both sides (same day only) and treat that as blocked time.
+    """
+
+    sa = a.slots
+    sb = b.slots
+    if not sa or not sb:
+        return False
+
+    a_pr = needs_buffer(a, practical_min=practical_min)
+    b_pr = needs_buffer(b, practical_min=practical_min)
+
+    for xa in sa:
+        for xb in sb:
+            if xa.day_en != xb.day_en:
+                continue
+            a0, a1 = slot_to_minutes(xa)
+            b0, b1 = slot_to_minutes(xb)
+            if a_pr:
+                a0 -= buffer_min
+                a1 += buffer_min
+            if b_pr:
+                b0 -= buffer_min
+                b1 += buffer_min
+            if (a0 < b1) and (b0 < a1):
+                return True
+    return False
+
+
 def bucket_score(c: Course) -> int:
     # Major buckets
     if c.isu in {"전필", "전공지정", "전공필수", "전지"}:
@@ -644,6 +698,29 @@ def main() -> None:
     )
     ap.add_argument("--max-days", type=int, default=3, help="Prefer schedules within N on-campus days (default: 3)")
     ap.add_argument("--day-penalty", type=int, default=15, help="Penalty when adding a new on-campus day (default: 15)")
+    ap.add_argument(
+        "--avoid-day",
+        action="append",
+        default=[],
+        help="Avoid on-campus classes on this day (e.g. Tue). Can be repeated.",
+    )
+    ap.add_argument(
+        "--buffer-min",
+        type=int,
+        default=0,
+        help="If >0, apply this many minutes buffer around practical-like long classes (default: 0)",
+    )
+    ap.add_argument(
+        "--practical-min",
+        type=int,
+        default=180,
+        help="Threshold minutes to treat a class as practical-like for buffering (default: 180)",
+    )
+    ap.add_argument(
+        "--lunch",
+        default="",
+        help="Prefer to keep lunch free; format HH:MM~HH:MM (example: 12:00~13:00). If set, any overlap is rejected.",
+    )
     ap.add_argument("--format", choices=["md", "ascii", "both", "html"], default="md", help="Timetable output format")
     ap.add_argument("--out", help="Write output to a file instead of stdout (useful for --format html)")
     ap.add_argument(
@@ -667,6 +744,15 @@ def main() -> None:
         help="If set, fill remaining credits with 교양(교필/선필교/일교/일선) offerings (default: off)",
     )
     args = ap.parse_args()
+
+    avoid_days = {d.strip().title() for d in (args.avoid_day or []) if d.strip()}
+
+    lunch_range: Optional[Tuple[int, int]] = None
+    if args.lunch:
+        m = re.match(r"\s*(\d{1,2}:\d{2})\s*~\s*(\d{1,2}:\d{2})\s*", args.lunch)
+        if not m:
+            raise SystemExit("Invalid --lunch format. Use HH:MM~HH:MM (e.g. 12:00~13:00)")
+        lunch_range = (_parse_hhmm(m.group(1)), _parse_hhmm(m.group(2)))
 
     jar = cookies_from_state()
     client = httpx.Client(
@@ -762,6 +848,23 @@ def main() -> None:
             penalty += args.day_penalty * 3
         return penalty
 
+    def overlaps_lunch(c: Course) -> bool:
+        if not lunch_range:
+            return False
+        if not c.slots:
+            return False
+        l0, l1 = lunch_range
+        for s in c.slots:
+            a0, a1 = slot_to_minutes(s)
+            if (a0 < l1) and (l0 < a1):
+                return True
+        return False
+
+    def hits_avoid_day(c: Course) -> bool:
+        if not avoid_days:
+            return False
+        return any(d in avoid_days for d in course_days(c))
+
     def try_pick_from(cands: List[Course], *, non_year_penalty: int) -> None:
         nonlocal total
         for cand in cands:
@@ -769,8 +872,17 @@ def main() -> None:
                 break
             if cand.credit <= 0:
                 continue
-            if any(conflict(cand, p) for p in picked):
+            if hits_avoid_day(cand):
                 continue
+            if overlaps_lunch(cand):
+                continue
+
+            if args.buffer_min > 0:
+                if any(conflict_with_buffer(cand, p, buffer_min=args.buffer_min, practical_min=args.practical_min) for p in picked):
+                    continue
+            else:
+                if any(conflict(cand, p) for p in picked):
+                    continue
 
             base = total_score(cand)
             net = base - incremental_cost(cand) - non_year_penalty

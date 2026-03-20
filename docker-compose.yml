@@ -2,7 +2,7 @@ services:
   web:
     build: .
     ports:
-      - "8080:80"
-    # If you want hot-reload without rebuilding the image, uncomment volume mount:
+      - "8282:80"
+    # Optional: hot-reload static without rebuilding
     # volumes:
     #   - ./static:/usr/share/nginx/html:ro
