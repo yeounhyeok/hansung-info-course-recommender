@@ -69,6 +69,26 @@ docker compose up --build
 
 ### 0) 설치
 
+#### (A) 고정 루틴(권장: OpenClaw/서버에서 쓰기 좋게)
+
+레포에 **고정 루틴 래퍼**(`openclaw/*.sh`)를 포함했습니다. 아래 순서대로만 돌리면 됩니다.
+
+```bash
+# 1) venv + 의존성 설치
+bash openclaw/setup.sh
+
+# 2) 로그인 쿠키 갱신
+bash openclaw/login_refresh.sh
+
+# 3) 이번 학기 교과목 추천 + ASCII 시간표
+bash openclaw/recommend_this_term.sh --term 20261 --major Y030 --target 18
+
+# 4) 전공필수 학점 기준 로드맵
+bash openclaw/roadmap.sh --start 20261 --grad 20282 --major Y030 --required-credits 21
+```
+
+#### (B) 수동(순수 파이썬)
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
