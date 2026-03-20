@@ -19,7 +19,7 @@ git clone https://github.com/yeounhyeok/hansung-info-course-recommender.git hans
 
 또는(운영 방식): OpenClaw에게 그냥 이렇게 말해도 됩니다.
 
-> "[<레포 URL>](https://github.com/yeounhyeok/hansung-info-course-recommender) 이 레포 클론해서 스킬로 만들어줘"
+> "https://github.com/yeounhyeok/hansung-info-course-recommender 이 레포 클론해서 스킬로 만들어줘"
 
 그러면 OpenClaw가 `skills/`에 클론/배치까지 해주고, 이후는 SKILL.md대로 따라서 세팅하면 끝입니다.
 
