@@ -9,4 +9,4 @@ load_env
 activate_venv
 
 cd "$REPO_DIR"
-python3 hansung-info/scripts/recommend_this_term.py "$@"
+python3 "$SCRIPTS_DIR/recommend_this_term.py" "$@"

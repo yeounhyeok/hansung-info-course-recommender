@@ -9,4 +9,4 @@ load_env
 activate_venv
 
 cd "$REPO_DIR"
-python3 hansung-info/scripts/roadmap_generator.py "$@"
+python3 "$SCRIPTS_DIR/roadmap_generator.py" "$@"

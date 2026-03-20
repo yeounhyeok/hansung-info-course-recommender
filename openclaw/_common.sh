@@ -5,6 +5,18 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$REPO_DIR/.venv"
 OPENCLAW_ENV="$HOME/.openclaw/.env"
 
+# Some deployments vendor the skill into a different directory layout (e.g. OpenClaw skills/).
+# Detect where the python scripts live.
+SCRIPTS_DIR=""
+if [[ -d "$REPO_DIR/hansung-info/scripts" ]]; then
+  SCRIPTS_DIR="$REPO_DIR/hansung-info/scripts"
+elif [[ -d "$REPO_DIR/scripts" ]]; then
+  SCRIPTS_DIR="$REPO_DIR/scripts"
+else
+  echo "Could not find scripts directory (expected hansung-info/scripts or scripts)" >&2
+  exit 4
+fi
+
 load_env() {
   if [[ -f "$OPENCLAW_ENV" ]]; then
     set -a
