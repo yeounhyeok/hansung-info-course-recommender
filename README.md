@@ -80,6 +80,10 @@ python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --
 # (3) 전공필수 학점 기준 로드맵
 python3 hansung-info/scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --required-credits 21
 ```
+---
+#### Openclaw 스킬 실행 화면:
+<img width="1408" height="754" alt="image" src="https://github.com/user-attachments/assets/79b5c652-9172-4be7-b3fc-4c9feba348d8" />
+
 
 ## Requirements
 - Python 3.10+
