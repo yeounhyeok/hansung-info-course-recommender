@@ -926,7 +926,11 @@ def main() -> None:
         print(f"[publish] latest: {publish_root / 'latest' / 'index.html'}")
 
         if args.publish_base_url:
-            base = args.publish_base_url.rstrip("/")
+            base = args.publish_base_url.strip()
+            if not base.startswith("http://") and not base.startswith("https://"):
+                # Default to https when scheme is omitted.
+                base = "https://" + base
+            base = base.rstrip("/")
             # We always publish both a unique slug path and a stable latest path.
             slug = published_path.parent.name
             print(f"[publish] url (latest): {base}/latest/")
