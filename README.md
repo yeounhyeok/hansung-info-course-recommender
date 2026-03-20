@@ -52,6 +52,14 @@
 
 ## 실행 예시
 
+### 시간표를 보기 좋게 공유하기(정적 HTML)
+
+추천 결과를 `docs/index.html`로 뽑아두면, GitHub Pages로 **링크 공유**가 가능합니다.
+
+```bash
+python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --fill-ge --out-html docs/index.html
+```
+
 ### 0) 설치
 
 ```bash

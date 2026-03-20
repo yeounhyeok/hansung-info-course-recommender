@@ -293,6 +293,147 @@ def render_markdown_timetable(picked: List[Course]) -> str:
     return "\n".join(rows)
 
 
+def render_html_timetable(*, term: str, major: str, target: int, picked: List[Course]) -> str:
+    """Render a standalone HTML page for the timetable.
+
+    Notes:
+    - Uses a simple period->time mapping (1교시=09:00, +1h) for readability.
+    - Shows a weekly grid (Mon..Fri) and a picked course list.
+    """
+
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    days_ko = {"Mon": "월", "Tue": "화", "Wed": "수", "Thu": "목", "Fri": "금"}
+
+    # Determine grid range
+    periods: List[int] = []
+    for c in picked:
+        for s in c.slots:
+            for p in range(s.start_period, s.end_period + 1):
+                periods.append(p)
+    if periods:
+        p_min, p_max = min(periods), max(periods)
+    else:
+        p_min, p_max = 1, 12
+
+    # Build cell -> list of course labels
+    cell: Dict[Tuple[int, str], List[str]] = {}
+
+    def label(c: Course) -> str:
+        # keep compact
+        return re.sub(r"\s+", " ", c.name).strip()
+
+    for c in picked:
+        for s in c.slots:
+            if s.day_en not in days:
+                continue
+            for p in range(s.start_period, s.end_period + 1):
+                cell.setdefault((p, s.day_en), []).append(label(c))
+
+    # Course list HTML
+    li = []
+    for c in picked:
+        meta = []
+        if c.isu:
+            meta.append(c.isu)
+        if c.credit:
+            meta.append(f"{c.credit}학점")
+        if c.grade:
+            meta.append(f"{c.grade}학년")
+        if c.prof:
+            meta.append(c.prof)
+        if c.classroom:
+            meta.append(c.classroom)
+        li.append(f"<li><b>{label(c)}</b><div class='meta'>{' · '.join(meta)}</div></li>")
+
+    # Grid rows
+    grid_rows = []
+    for p in range(p_min, p_max + 1):
+        t = f"{period_to_time_label(p)}~{period_to_time_label(p+1)}"
+        tcell = f"<div class='time'>{t}</div>"
+        cols = []
+        for d in days:
+            items = cell.get((p, d), [])
+            if not items:
+                cols.append("<div class='cell empty'></div>")
+            else:
+                # de-dup within cell
+                uniq = []
+                for x in items:
+                    if x not in uniq:
+                        uniq.append(x)
+                cols.append("<div class='cell'><div class='course'>" + "<br>".join(uniq) + "</div></div>")
+        grid_rows.append("<div class='row'>" + tcell + "".join(cols) + "</div>")
+
+    title = f"{term} {major} 추천 시간표"
+    html = f"""<!doctype html>
+<html lang='ko'>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>{title}</title>
+  <style>
+    :root {{ --bg:#0b0f17; --panel:#111827; --muted:#94a3b8; --line:#243042; --text:#e5e7eb; --accent:#60a5fa; }}
+    body {{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans KR', Arial; background:var(--bg); color:var(--text); }}
+    .wrap {{ max-width: 1100px; margin: 0 auto; padding: 22px; }}
+    h1 {{ margin:0 0 8px; font-size: 20px; }}
+    .sub {{ color: var(--muted); font-size: 13px; margin-bottom: 18px; }}
+    .grid {{ border:1px solid var(--line); border-radius: 10px; overflow:hidden; background:var(--panel); }}
+    .head {{ display:grid; grid-template-columns: 120px repeat(5, 1fr); background:rgba(255,255,255,0.03); border-bottom:1px solid var(--line); }}
+    .head div {{ padding:10px 12px; font-weight:600; color:var(--muted); }}
+    .row {{ display:grid; grid-template-columns: 120px repeat(5, 1fr); border-bottom:1px solid var(--line); }}
+    .row:last-child {{ border-bottom:none; }}
+    .time {{ padding:10px 12px; color:var(--muted); font-variant-numeric: tabular-nums; border-right:1px solid var(--line); }}
+    .cell {{ padding:8px 10px; border-right:1px solid var(--line); min-height:40px; }}
+    .cell:last-child {{ border-right:none; }}
+    .cell.empty {{ background: rgba(0,0,0,0.06); }}
+    .course {{ background: rgba(96,165,250,0.12); border: 1px solid rgba(96,165,250,0.25); padding:6px 8px; border-radius: 8px; line-height:1.25; }}
+    .cols {{ display:grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }}
+    .card {{ border:1px solid var(--line); border-radius: 10px; background:var(--panel); padding: 12px 14px; }}
+    .card h2 {{ margin:0 0 10px; font-size: 14px; color: var(--muted); }}
+    ul {{ margin:0; padding-left: 18px; }}
+    li {{ margin: 8px 0; }}
+    .meta {{ margin-top:4px; color: var(--muted); font-size: 12px; }}
+    .note {{ margin-top: 10px; color: var(--muted); font-size: 12px; }}
+    a {{ color: var(--accent); }}
+  </style>
+</head>
+<body>
+  <div class='wrap'>
+    <h1>{title}</h1>
+    <div class='sub'>목표 {target}학점 · 생성 시각표시는 기본 매핑(1교시=09:00, 교시당 1시간) 기반입니다.</div>
+
+    <div class='grid'>
+      <div class='head'>
+        <div>시간</div>
+        <div>{days_ko['Mon']}</div>
+        <div>{days_ko['Tue']}</div>
+        <div>{days_ko['Wed']}</div>
+        <div>{days_ko['Thu']}</div>
+        <div>{days_ko['Fri']}</div>
+      </div>
+      {''.join(grid_rows)}
+    </div>
+
+    <div class='cols'>
+      <div class='card'>
+        <h2>선택 과목</h2>
+        <ul>
+          {''.join(li)}
+        </ul>
+        <div class='note'>※ 온라인강좌 시간(예: 1.5시간)은 오프라인 그리드에 표시되지 않을 수 있습니다.</div>
+      </div>
+      <div class='card'>
+        <h2>공유</h2>
+        <div class='note'>이 페이지는 스크립트 실행 결과로 생성된 정적 HTML입니다.</div>
+        <div class='note'>GitHub Pages로 호스팅하면 링크 하나로 공유할 수 있습니다.</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>"""
+    return html
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--term", required=True)
@@ -313,6 +454,11 @@ def main() -> None:
         "--fill-ge",
         action="store_true",
         help="If set, fill remaining credits with 교양(교필/선필교/일교/일선) offerings (default: off)",
+    )
+    ap.add_argument(
+        "--out-html",
+        default="",
+        help="Write a standalone HTML timetable page to this path (e.g., docs/index.html)",
     )
     args = ap.parse_args()
 
@@ -535,6 +681,17 @@ def main() -> None:
             lines.append("```")
             lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
             lines.append("```")
+
+    # Optional HTML output (for GitHub Pages / sharing)
+    if args.out_html:
+        out = pathlib.Path(args.out_html)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            render_html_timetable(term=args.term, major=args.major, target=args.target, picked=picked),
+            encoding="utf-8",
+        )
+        lines.append("")
+        lines.append(f"- HTML 출력: {out}")
 
     print("\n".join(lines).strip() + "\n")
     client.close()
