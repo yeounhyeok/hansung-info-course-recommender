@@ -19,11 +19,11 @@ git clone https://github.com/yeounhyeok/hansung-info-course-recommender.git hans
 
 또는(운영 방식): OpenClaw에게 그냥 이렇게 말해도 됩니다.
 
-> "<레포 URL> 이 레포 푸시해서 스킬로 만들어줘"
+> "[<레포 URL>](https://github.com/yeounhyeok/hansung-info-course-recommender) 이 레포 클론해서 스킬로 만들어줘"
 
-그러면 OpenClaw가 `skills/`에 클론/배치까지 해주고, 이후는 SKILL.md대로 세팅하면 끝입니다.
+그러면 OpenClaw가 `skills/`에 클론/배치까지 해주고, 이후는 SKILL.md대로 따라서 세팅하면 끝입니다.
 
-## 파이프라인(아주 간단)
+## 파이프라인
 1) 로그인해서 쿠키 갱신 → `secrets/hansung_info_storage.json`
 2) 종정시 개설과목 API에서 이번 학기 개설 과목 목록 수집
 3) 전필/전기/전선(및 필요 시 교양) 우선순위 + 충돌 검사로 조합 추천
