@@ -38,8 +38,13 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import httpx
 
-WORKSPACE = pathlib.Path("/home/ubuntu/.openclaw/workspace")
-STATE = WORKSPACE / "secrets" / "hansung_info_storage.json"
+# Repo-root relative paths (better first-run UX when cloning)
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# Cookie/session state (prefer repo-local secrets/, but keep OpenClaw fallback)
+STATE = REPO_ROOT / "secrets" / "hansung_info_storage.json"
+OPENCLAW_STATE_FALLBACK = pathlib.Path("/home/ubuntu/.openclaw/workspace/secrets/hansung_info_storage.json")
+
 INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
 BASE = "https://info.hansung.ac.kr/jsp_21/student/kyomu/"
 HISTORY = BASE + "siganpyo_aui_data.jsp"
@@ -50,7 +55,16 @@ DEFAULT_PUBLISH_DIR = pathlib.Path.home() / "docker_volumes" / "hansung-info-sta
 
 
 def cookies_from_state() -> httpx.Cookies:
-    data = json.loads(STATE.read_text(encoding="utf-8"))
+    state_path = STATE
+    if not state_path.exists() and OPENCLAW_STATE_FALLBACK.exists():
+        state_path = OPENCLAW_STATE_FALLBACK
+
+    if not state_path.exists():
+        raise SystemExit(
+            "No session state found. Run login_refresh.py first (it should create secrets/hansung_info_storage.json)."
+        )
+
+    data = json.loads(state_path.read_text(encoding="utf-8"))
     jar = httpx.Cookies()
     for c in data.get("cookies", []):
         jar.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path") or "/")
@@ -455,6 +469,7 @@ def publish_html(html: str, *, publish_dir: pathlib.Path, slug: Optional[str] = 
 
     - Writes to: <publish_dir>/timetables/<slug>/index.html
     - Updates: <publish_dir>/latest/index.html
+    - Updates: <publish_dir>/index.html  (so `/` always shows the latest)
 
     Returns the written index.html path.
     """
@@ -469,6 +484,9 @@ def publish_html(html: str, *, publish_dir: pathlib.Path, slug: Optional[str] = 
     latest = publish_dir / "latest"
     latest.mkdir(parents=True, exist_ok=True)
     (latest / "index.html").write_text(html, encoding="utf-8")
+
+    # Convenience: root index points to latest content.
+    (publish_dir / "index.html").write_text(html, encoding="utf-8")
 
     return out
 
