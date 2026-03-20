@@ -1,6 +1,6 @@
 ---
 name: hansung-info
-description: Read-only automation for Hansung Univ 종정시(info.hansung.ac.kr): login cookie refresh, offerings/curriculum fetch, and conflict-free course recommendations with copy-paste-friendly ASCII/Markdown timetable output.
+description: "Read-only automation for Hansung Univ 종정시(info.hansung.ac.kr): login cookie refresh, offerings/curriculum fetch, and conflict-free course recommendations with copy-paste-friendly ASCII/Markdown timetable output."
 ---
 
 # Hansung Info (종정시) — OpenClaw Skill
@@ -30,7 +30,7 @@ git clone https://github.com/yeounhyeok/hansung-info-course-recommender.git hans
 
 ### 1) 설치(venv)
 
-스킬 폴더에서 venv를 만들고 의존성을 설치합니다.
+스킬 폴더에서 venv를 만들고 의존성을 설치합니다. **처음 설치한 직후부터 바로 실행 가능**하도록 이 단계는 필수입니다.
 
 ```bash
 cd ~/.openclaw/workspace/skills/hansung-info
@@ -53,6 +53,8 @@ chmod 600 ~/.openclaw/.env
 ```
 
 ### 3) 로그인 쿠키 갱신
+
+**처음 실행 전 반드시 1회** 쿠키를 만들고(또는 만료 시 갱신) 진행합니다.
 
 ```bash
 cd ~/.openclaw/workspace/skills/hansung-info
@@ -105,6 +107,10 @@ python3 scripts/login_refresh.py
 python3 scripts/timetable_offerings.py --term 20261 --major Y030
 python3 scripts/major_curriculum.py --term 20261 --major Y030
 python3 scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --format md
+
+# ✅ 수강과목 리스트(학기별) — "내 종정시" 기준으로 과거 학기 과목을 뽑을 때
+python3 scripts/semester_courses.py --term 20252
+
 python3 scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --required-credits 21
 ```
 
@@ -112,6 +118,10 @@ python3 scripts/roadmap_generator.py --start 20261 --grad 20282 --major Y030 --r
 - 시간표는 **30분 그리드**로 렌더링합니다.
 - 월/수/목은 75분 패턴 때문에 종정시 표기(`n/nM`)를 30분 경계로 스냅한 매핑 테이블을 사용합니다.
 - 따라서 **같은 `n/nM`라도 요일에 따라 실제 시간이 달라질 수 있고**, 충돌검사도 이 규칙을 그대로 따릅니다.
+
+## 학기별 수강과목 리스트(내 종정시 기반)
+- 누적 성적 화면(`total_grade.jsp`)에서 **학기 카드(YYYY 학년도 N 학기)** 를 파싱해 그 학기 수강과목을 뽑습니다.
+- 일부 학기는 학적 상태(휴학/군휴학 등) 때문에 화면에 카드가 없을 수 있습니다. 그 경우 "해당 학기 데이터 없음"으로 반환합니다.
 
 ## References
 - `references/endpoints.md`
