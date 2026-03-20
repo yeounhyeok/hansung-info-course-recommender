@@ -46,7 +46,15 @@ Writes: `secrets/hansung_info_storage.json`
 python3 skills/hansung-info/scripts/grade_summary.py
 ```
 
-### 3) 이번 학기 개설 과목(시간표) 조회
+### 3) 전공/트랙 코드 목록(드롭다운) 조회
+
+```bash
+# term(학기) 기준으로 종정시 드롭다운(sjungong) 옵션을 그대로 가져옵니다.
+python3 hansung-info/scripts/jungong_list.py --term 20261
+python3 hansung-info/scripts/jungong_list.py --term 20261 --format json --out .tmp/jungonglist_20261.json
+```
+
+### 4) 이번 학기 개설 과목(시간표) 조회
 
 ```bash
 python3 skills/hansung-info/scripts/timetable_offerings.py --term 20261 --major Y030
