@@ -66,6 +66,9 @@ python3 skills/hansung-info/scripts/major_curriculum.py --scan-terms --major Y03
 # 2학년 과목 위주로 전공을 채우고, 남는 학점은 교양으로 채우는 플랜(권장)
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md
 
+# 전공+교양까지 포함해서 18학점 자동 채우기
+python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md --fill-ge
+
 # 타 학년 전공까지 섞어서 18학점 꽉 채우고 싶으면
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --allow-other-years --format md
 ```

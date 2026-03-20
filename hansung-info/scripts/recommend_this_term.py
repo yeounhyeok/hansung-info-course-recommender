@@ -16,8 +16,9 @@ Strategy (explainable heuristic):
 - Output a Markdown timetable (time-based labels) and a pick list.
 
 Limitations:
-- 교양 과목은 현재 이 스킬이 조회하는 전공 시간표 API 범위 밖이라 자동 추천이 어렵습니다.
-  (추후 '전체 개설 과목' 데이터 소스가 확보되면 자동 추천으로 확장 가능)
+- 교양 과목도 종정시 시간표 API에서 코드(L11E/L11F/L11G/L11H)로 조회 가능합니다.
+  다만 졸업요건의 "교필/선필교" 정확한 학점 규칙은 학번/규정에 따라 달라질 수 있어,
+  현재는 **개설 과목 기반 추천**만 수행하고, 요건 충족 판정은 추가 크롤링/연동이 필요합니다.
 
 Usage:
   python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2
@@ -48,6 +49,24 @@ def cookies_from_state() -> httpx.Cookies:
     for c in data.get("cookies", []):
         jar.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path") or "/")
     return jar
+
+
+def fetch_offerings(client: httpx.Client, *, term: str, code: str) -> List[Dict[str, str]]:
+    """Fetch offerings rows for a given term + 'sjungong' code.
+
+    Notes:
+    - Major example: Y030 (AI응용학과)
+    - General education examples:
+      - L11E 교양필수
+      - L11F 선택필수교양(선필교)
+      - L11G 일반교양
+      - L11H 일반선택
+    """
+
+    xml = client.post(HISTORY, data={"gubun": "history", "syearhakgi": term, "sjungong": code}).text
+    if "로그인 정보를 잃었습니다" in xml:
+        raise SystemExit("Session expired. Run login_refresh.py")
+    return parse_rows(xml)
 
 
 def get_tag(tag: str, chunk: str) -> str:
@@ -156,12 +175,22 @@ def conflict(a: Course, b: Course) -> bool:
 
 
 def bucket_score(c: Course) -> int:
+    # Major buckets
     if c.isu in {"전필", "전공지정", "전공필수", "전지"}:
         return 100
     if c.isu == "전기":
         return 70
     if c.isu == "전선":
         return 50
+    # General education buckets (observed)
+    if c.isu in {"교필"}:
+        return 65
+    if c.isu in {"선필교"}:
+        return 60
+    if c.isu in {"일교"}:
+        return 55
+    if c.isu in {"일선"}:
+        return 45
     return 0
 
 
@@ -280,22 +309,22 @@ def main() -> None:
     ap.add_argument("--format", choices=["md", "ascii", "both"], default="md", help="Timetable output format")
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
+    ap.add_argument(
+        "--fill-ge",
+        action="store_true",
+        help="If set, fill remaining credits with 교양(교필/선필교/일교/일선) offerings (default: off)",
+    )
     args = ap.parse_args()
 
     jar = cookies_from_state()
-    with httpx.Client(
+    client = httpx.Client(
         timeout=25,
         follow_redirects=True,
         cookies=jar,
         headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX},
-    ) as c:
-        c.get(INDEX)
-        xml = c.post(HISTORY, data={"gubun": "history", "syearhakgi": args.term, "sjungong": args.major}).text
-
-    if "로그인 정보를 잃었습니다" in xml:
-        raise SystemExit("Session expired. Run login_refresh.py")
-
-    raw = parse_rows(xml)
+    )
+    client.get(INDEX)
+    raw = fetch_offerings(client, term=args.term, code=args.major)
 
     courses: List[Course] = []
     for r in raw:
@@ -323,8 +352,13 @@ def main() -> None:
         dedup.setdefault(c.code, c)
     courses = list(dedup.values())
 
-    # Filter to major buckets only
-    courses = [c for c in courses if c.isu in {"전필", "전지", "전공필수", "전공지정", "전기", "전선"}]
+    # Filter to known buckets (major + GE)
+    courses = [
+        c
+        for c in courses
+        if c.isu
+        in {"전필", "전지", "전공필수", "전공지정", "전기", "전선", "교필", "선필교", "일교", "일선"}
+    ]
 
     # Year handling
     def year_of(c: Course) -> Optional[int]:
@@ -346,7 +380,8 @@ def main() -> None:
     if args.year <= 2 and not args.allow_other_years:
         courses = [c for c in courses if "캡스톤" not in c.name]
 
-    # Two-pass ranking: (1) strict target-year, then (2) expand if credits are insufficient.
+    # Two-pass ranking for MAJOR courses: (1) strict target-year, then (2) optionally expand.
+    # (GE filling is handled later via --fill-ge.)
     primary = [c for c in courses if is_target_year(c)]
     secondary = [c for c in courses if c not in primary]
 
@@ -398,11 +433,50 @@ def main() -> None:
 
     # Pass 2: if still short
     # Default behavior (for "학년 맞춰 듣기"): do NOT auto-pick higher-year major courses.
-    # Instead, leave remaining credits to 교양/자유선택.
     # If the user explicitly wants it, they can pass --allow-other-years.
     if total < args.target and args.allow_other_years:
         expanded = sorted(secondary, key=lambda x: rank_key(x), reverse=True)
         try_pick_from(expanded, non_year_penalty=25)
+
+    # Pass 3 (optional): fill remaining credits with General Education offerings.
+    if total < args.target and args.fill_ge:
+        ge_codes = [
+            ("교양필수", "L11E"),
+            ("선택필수교양(선필교)", "L11F"),
+            ("일반교양", "L11G"),
+            ("일반선택", "L11H"),
+        ]
+        ge_courses: List[Course] = []
+        for label, code in ge_codes:
+            rows = fetch_offerings(client, term=args.term, code=code)
+            for r in rows:
+                if not r.get("code"):
+                    continue
+                try:
+                    credit = int(r.get("credit") or 0)
+                except ValueError:
+                    credit = 0
+                ge_courses.append(
+                    Course(
+                        code=r.get("code") or "",
+                        name=r.get("name") or "",
+                        isu=r.get("isu") or "",
+                        credit=credit,
+                        grade=r.get("grade") or "",
+                        prof=r.get("prof") or "",
+                        classroom=r.get("classroom") or "",
+                    )
+                )
+
+        # Dedup GE by code
+        ge_dedup: "OrderedDict[str, Course]" = OrderedDict()
+        for gc in ge_courses:
+            ge_dedup.setdefault(gc.code, gc)
+        ge_courses = list(ge_dedup.values())
+
+        # Rank: 교필 > 선필교 > 일교 > 일선, then prefer not adding new days
+        ge_ranked = sorted(ge_courses, key=lambda x: total_score(x), reverse=True)
+        try_pick_from(ge_ranked, non_year_penalty=0)
 
     # Output
     lines: List[str] = [f"# 📚 이번 학기 추천 ({args.term}, {args.major})", ""]
@@ -427,18 +501,25 @@ def main() -> None:
     lines.append("")
     lines.append(f"- 예상 등교 요일: {', '.join(DAY_EN_TO_KO.get(d, d) for d in used_days) if used_days else '(온라인만)'}")
 
-    # 교양 안내(현재 한계)
-    if total < args.target:
+    # 교양 안내
+    if total < args.target and not args.fill_ge:
         lines.append("")
         lines.append("## ✅ 남은 학점은 교양으로 채우기")
         lines.append(
             "- 요청하신 대로 '학년(2학년) 과목 위주'로만 전공을 채우면, 남는 학점은 교양/자유선택으로 채우는 방식이 가장 자연스럽습니다."
         )
         lines.append(
-            "- 현재 버전은 전공 시간표 API(major=Y030 등) 기반이라, 교양 전체 개설 과목을 자동으로 추천/충돌검사까지 하기는 어렵습니다."
+            "- 이 스킬은 교양도 코드(L11E/L11F/L11G/L11H)로 조회 가능하지만, 기본값은 전공 위주 추천만 수행합니다."
         )
-        lines.append(f"- 남은 학점: {args.target - total}학점 → 교양 2~3과목(각 2~3학점)으로 채우는 것을 권장")
+        lines.append(f"- 남은 학점: {args.target - total}학점")
+        lines.append("- 교양까지 자동으로 채우려면 `--fill-ge`를 켜세요")
         lines.append("- (옵션) 타 학년 전공까지 섞어서 18학점 꽉 채우고 싶으면 `--allow-other-years`를 켜세요")
+
+    if args.fill_ge:
+        lines.append("")
+        lines.append("## ⚠️ 교양(교필/선필교) 규칙에 대한 안내")
+        lines.append("- 현재 추천은 '개설 과목 + 시간표 충돌' 기반입니다.")
+        lines.append("- 학번/졸업요건에 따른 교필/선필교 정확한 충족 판정은 추후 졸업요건 데이터 연동으로 보강 예정입니다.")
 
     if not args.no_timetable:
         if args.format in {"md", "both"}:
@@ -456,6 +537,7 @@ def main() -> None:
             lines.append("```")
 
     print("\n".join(lines).strip() + "\n")
+    client.close()
 
 
 def _short_name(name: str, max_len: int = 6) -> str:
