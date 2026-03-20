@@ -77,6 +77,9 @@ python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --
 # 개인시간표조회 스타일(웹처럼 보기): HTML 파일 생성
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format html --out timetable.html
 
+# (권장) 정적 서빙 폴더로 바로 publish (첫 실행 시 경로를 물어보고 저장합니다)
+python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format html --publish
+
 # 전공+교양까지 포함해서 18학점 자동 채우기
 python3 hansung-info/scripts/recommend_this_term.py --term 20261 --major Y030 --target 18 --year 2 --max-days 3 --format md --fill-ge
 

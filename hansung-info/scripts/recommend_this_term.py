@@ -30,8 +30,10 @@ import argparse
 import json
 import pathlib
 import re
+import secrets
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import httpx
@@ -41,6 +43,10 @@ STATE = WORKSPACE / "secrets" / "hansung_info_storage.json"
 INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
 BASE = "https://info.hansung.ac.kr/jsp_21/student/kyomu/"
 HISTORY = BASE + "siganpyo_aui_data.jsp"
+
+# Publish config for static HTML serving (e.g. docker volume mounted into nginx)
+PUBLISH_CFG = pathlib.Path.home() / ".config" / "hansung-info-course-recommender" / "publish.json"
+DEFAULT_PUBLISH_DIR = pathlib.Path.home() / "docker_volumes" / "hansung-info-static" / "html"
 
 
 def cookies_from_state() -> httpx.Cookies:
@@ -398,6 +404,58 @@ def render_markdown_timetable(picked: List[Course]) -> str:
     return "\n".join(rows)
 
 
+def _load_publish_dir_interactive() -> pathlib.Path:
+    """Load publish dir from config, or ask once and persist.
+
+    Designed for first-time users: if config is missing, we prompt for a directory.
+    """
+
+    if PUBLISH_CFG.exists():
+        try:
+            data = json.loads(PUBLISH_CFG.read_text(encoding="utf-8"))
+            p = pathlib.Path(data.get("publish_dir", "")).expanduser()
+            if str(p).strip():
+                return p
+        except Exception:
+            pass
+
+    # First run: prompt
+    default = str(DEFAULT_PUBLISH_DIR)
+    try:
+        ans = input(f"[publish] 정적 HTML을 저장할 폴더를 입력하세요 (default: {default})\n> ").strip()
+    except EOFError:
+        ans = ""
+
+    p = pathlib.Path(ans or default).expanduser()
+    p.mkdir(parents=True, exist_ok=True)
+    PUBLISH_CFG.parent.mkdir(parents=True, exist_ok=True)
+    PUBLISH_CFG.write_text(json.dumps({"publish_dir": str(p)}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return p
+
+
+def publish_html(html: str, *, publish_dir: pathlib.Path, slug: Optional[str] = None) -> pathlib.Path:
+    """Write a generated HTML timetable to a static-serving directory.
+
+    - Writes to: <publish_dir>/timetables/<slug>/index.html
+    - Updates: <publish_dir>/latest/index.html
+
+    Returns the written index.html path.
+    """
+
+    slug = slug or (datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_urlsafe(4))
+    base = publish_dir / "timetables" / slug
+    base.mkdir(parents=True, exist_ok=True)
+
+    out = base / "index.html"
+    out.write_text(html, encoding="utf-8")
+
+    latest = publish_dir / "latest"
+    latest.mkdir(parents=True, exist_ok=True)
+    (latest / "index.html").write_text(html, encoding="utf-8")
+
+    return out
+
+
 def render_html_timetable(picked: List[Course]) -> str:
     """Render a simple HTML weekly timetable similar to the Hansung personal timetable view.
 
@@ -553,6 +611,15 @@ def main() -> None:
     ap.add_argument("--day-penalty", type=int, default=15, help="Penalty when adding a new on-campus day (default: 15)")
     ap.add_argument("--format", choices=["md", "ascii", "both", "html"], default="md", help="Timetable output format")
     ap.add_argument("--out", help="Write output to a file instead of stdout (useful for --format html)")
+    ap.add_argument(
+        "--publish",
+        action="store_true",
+        help="If set with --format html, save the HTML into a preconfigured static directory (first run prompts).",
+    )
+    ap.add_argument(
+        "--publish-dir",
+        help="Override publish dir (otherwise uses persisted config under ~/.config/hansung-info-course-recommender/publish.json)",
+    )
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
     ap.add_argument(
@@ -808,13 +875,24 @@ def main() -> None:
     output_text = "\n".join(lines).strip() + "\n"
 
     # HTML timetable mode: emit ONLY the HTML document (no markdown header/list).
+    published_path: Optional[pathlib.Path] = None
     if args.format == "html" and not args.no_timetable:
         output_text = render_html_timetable(picked)
+        if args.publish:
+            publish_dir = pathlib.Path(args.publish_dir).expanduser() if args.publish_dir else _load_publish_dir_interactive()
+            publish_dir.mkdir(parents=True, exist_ok=True)
+            published_path = publish_html(output_text, publish_dir=publish_dir)
 
     if args.out:
         pathlib.Path(args.out).write_text(output_text, encoding="utf-8")
     else:
         print(output_text)
+
+    if published_path is not None:
+        # Print paths for convenience (useful when the directory is volume-mounted into nginx).
+        publish_root = published_path.parents[2] if len(published_path.parents) >= 3 else published_path.parent
+        print(f"\n[publish] wrote: {published_path}")
+        print(f"[publish] latest: {publish_root / 'latest' / 'index.html'}")
 
     client.close()
 
