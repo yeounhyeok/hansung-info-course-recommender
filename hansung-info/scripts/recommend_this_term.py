@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import httpx
+from bs4 import BeautifulSoup
 
 # Repo-root relative paths (better first-run UX when cloning)
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -50,6 +51,8 @@ INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
 BASE = "https://info.hansung.ac.kr/jsp_21/student/kyomu/"
 HISTORY = BASE + "siganpyo_aui_data.jsp"
 
+# Cumulative grades (used for "exclude already taken")
+TOTAL_GRADE = "https://info.hansung.ac.kr/jsp_21/student/grade/total_grade.jsp?viewMode=oc"
 
 
 def cookies_from_state() -> httpx.Cookies:
@@ -67,6 +70,42 @@ def cookies_from_state() -> httpx.Cookies:
     for c in data.get("cookies", []):
         jar.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path") or "/")
     return jar
+
+
+def fetch_taken_course_codes(client: httpx.Client) -> List[str]:
+    """Return taken course codes from the cumulative grade page.
+
+    Notes:
+    - This is best-effort and depends on the HTML structure of total_grade.jsp.
+    - We intentionally only extract the *course codes* to avoid storing personal details.
+    """
+
+    html = client.get(TOTAL_GRADE).text
+    if "로그인 정보를 잃었습니다" in html:
+        raise SystemExit("Session expired. Run login_refresh.py")
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    codes: List[str] = []
+    for t in soup.find_all("table", class_="table_1"):
+        for tr in t.find_all("tr"):
+            tds = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+            if len(tds) < 3:
+                continue
+            code = (tds[2] or "").strip()
+            # Typical patterns: REQ0313, GEN0793, Y030001 ...
+            if re.fullmatch(r"[A-Z0-9]{6,10}", code):
+                codes.append(code)
+
+    # Keep order but unique
+    seen = set()
+    out: List[str] = []
+    for c in codes:
+        if c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out
 
 
 def fetch_offerings(client: httpx.Client, *, term: str, code: str) -> List[Dict[str, str]]:
@@ -727,6 +766,24 @@ def main() -> None:
         action="store_true",
         help="If set, fill remaining credits with 교양(교필/선필교/일교/일선) offerings (default: off)",
     )
+
+    ap.add_argument(
+        "--exclude-taken",
+        action="store_true",
+        help="If set, auto-exclude already taken courses by parsing the cumulative grade page (total_grade.jsp).",
+    )
+    ap.add_argument(
+        "--exclude-code",
+        action="append",
+        default=[],
+        help="Exclude course code (can repeat). Example: --exclude-code Y030007",
+    )
+    ap.add_argument(
+        "--exclude-name",
+        action="append",
+        default=[],
+        help="Exclude course name substring (can repeat). Example: --exclude-name 웹프",
+    )
     args = ap.parse_args()
 
     avoid_days = {d.strip().title() for d in (args.avoid_day or []) if d.strip()}
@@ -746,6 +803,20 @@ def main() -> None:
         headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX},
     )
     client.get(INDEX)
+
+    taken_codes: List[str] = []
+    if args.exclude_taken:
+        try:
+            taken_codes = fetch_taken_course_codes(client)
+        except Exception:
+            # Best-effort: do not fail recommendation if parsing fails.
+            taken_codes = []
+
+    exclude_codes = {c.strip().upper() for c in (args.exclude_code or []) if c.strip()}
+    exclude_codes |= {c.strip().upper() for c in taken_codes}
+
+    exclude_name_subs = [s.strip() for s in (args.exclude_name or []) if s.strip()]
+
     raw = fetch_offerings(client, term=args.term, code=args.major)
     raw_count = len(raw)
 
@@ -784,6 +855,15 @@ def main() -> None:
         if c.isu
         in {"전필", "전지", "전공필수", "전공지정", "전기", "전선", "교필", "선필교", "일교", "일선"}
     ]
+
+    # Hard exclusions (codes + name substrings)
+    if exclude_codes or exclude_name_subs:
+        def _name_hit(cc: Course) -> bool:
+            n = cc.name or ""
+            return any(sub in n for sub in exclude_name_subs)
+
+        courses = [c for c in courses if c.code.upper() not in exclude_codes and not _name_hit(c)]
+
     bucket_count = len(courses)
 
     # Year handling
@@ -928,6 +1008,14 @@ def main() -> None:
         for gc in ge_courses:
             ge_dedup.setdefault(gc.code, gc)
         ge_courses = list(ge_dedup.values())
+
+        # Apply the same exclusions to GE
+        if exclude_codes or exclude_name_subs:
+            def _name_hit(gc: Course) -> bool:
+                n = gc.name or ""
+                return any(sub in n for sub in exclude_name_subs)
+
+            ge_courses = [c for c in ge_courses if c.code.upper() not in exclude_codes and not _name_hit(c)]
 
         # Rank: 교필 > 선필교 > 일교 > 일선, then prefer not adding new days
         ge_ranked = sorted(ge_courses, key=lambda x: total_score(x), reverse=True)
