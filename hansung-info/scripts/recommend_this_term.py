@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import httpx
+from bs4 import BeautifulSoup
 
 # Repo-root relative paths (better first-run UX when cloning)
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -50,6 +51,8 @@ INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
 BASE = "https://info.hansung.ac.kr/jsp_21/student/kyomu/"
 HISTORY = BASE + "siganpyo_aui_data.jsp"
 
+# Cumulative grades (used for "exclude already taken")
+TOTAL_GRADE = "https://info.hansung.ac.kr/jsp_21/student/grade/total_grade.jsp?viewMode=oc"
 
 
 def cookies_from_state() -> httpx.Cookies:
@@ -67,6 +70,42 @@ def cookies_from_state() -> httpx.Cookies:
     for c in data.get("cookies", []):
         jar.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path") or "/")
     return jar
+
+
+def fetch_taken_course_codes(client: httpx.Client) -> List[str]:
+    """Return taken course codes from the cumulative grade page.
+
+    Notes:
+    - This is best-effort and depends on the HTML structure of total_grade.jsp.
+    - We intentionally only extract the *course codes* to avoid storing personal details.
+    """
+
+    html = client.get(TOTAL_GRADE).text
+    if "로그인 정보를 잃었습니다" in html:
+        raise SystemExit("Session expired. Run login_refresh.py")
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    codes: List[str] = []
+    for t in soup.find_all("table", class_="table_1"):
+        for tr in t.find_all("tr"):
+            tds = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+            if len(tds) < 3:
+                continue
+            code = (tds[2] or "").strip()
+            # Typical patterns: REQ0313, GEN0793, Y030001 ...
+            if re.fullmatch(r"[A-Z0-9]{6,10}", code):
+                codes.append(code)
+
+    # Keep order but unique
+    seen = set()
+    out: List[str] = []
+    for c in codes:
+        if c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out
 
 
 def fetch_offerings(client: httpx.Client, *, term: str, code: str) -> List[Dict[str, str]]:
@@ -411,15 +450,69 @@ def period_to_time_label(period: int) -> str:
 
 
 def slot_to_timerange(s: Slot) -> str:
-    start, _ = period_time(s.start_period)
-    _, end = period_time(s.end_period)
+    """Return HH:MM~HH:MM using the same boundary mapping as conflict checks."""
+
     start_min, end_min = slot_to_minutes(s)
-    # If M modifies boundaries, show exact minutes.
-    if (s.start_suffix or "").upper() == "M" or (s.end_suffix or "").upper() == "M":
-        sh, sm = divmod(start_min, 60)
-        eh, em = divmod(end_min, 60)
-        return f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}"
-    return f"{start}~{end}"
+    sh, sm = divmod(start_min, 60)
+    eh, em = divmod(end_min, 60)
+    return f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}"
+
+
+def render_daywise_schedule(picked: List[Course]) -> str:
+    """Render a day-wise schedule list (best for chat/mobile).
+
+    Output groups by 요일 and prints time ranges + course name.
+    Online/no-slot courses are listed separately.
+    """
+
+    day_order = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+    items_by_day: Dict[str, List[Tuple[int, str, Course, Slot]]] = {d: [] for d in day_order}
+    online: List[Course] = []
+
+    for c in picked:
+        if not c.slots:
+            online.append(c)
+            continue
+        for s in c.slots:
+            if s.day_en not in items_by_day:
+                continue
+            start_min, _end_min = slot_to_minutes(s)
+            items_by_day[s.day_en].append((start_min, slot_to_timerange(s), c, s))
+
+    lines: List[str] = []
+    for d in day_order:
+        items = sorted(items_by_day[d], key=lambda x: x[0])
+        if not items:
+            continue
+        lines.append(f"{DAY_EN_TO_KO.get(d, d)}")
+        for _m, tr, c, s in items:
+            prof = (c.prof or "").strip()
+
+            # Classroom strings often include multiple days/times; for day-wise view, keep it minimal.
+            room = (c.classroom or "").strip()
+            room = re.sub(r"[월화수목금토일]\s*\d+\s*[A-Z]?\s*~\s*\d+\s*[A-Z]?", "", room)
+            room = re.sub(r"\s*,\s*", " ", room)
+            room = re.sub(r"\s+", " ", room).strip(" /|")
+
+            meta = ""
+            if room:
+                meta += f" | {room}"
+            if prof:
+                meta += f" | {prof}"
+
+            lines.append(f"  - {tr}  {c.name} ({c.credit}학점){meta}")
+        lines.append("")
+
+    if online:
+        lines.append("온라인/시간 미표기")
+        for c in online:
+            prof = (c.prof or "").strip()
+            meta = f" | {prof}" if prof else ""
+            lines.append(f"  - {c.name} ({c.credit}학점){meta}")
+        lines.append("")
+
+    return "\n".join(lines).strip() if lines else "(표시할 과목이 없습니다.)"
 
 
 def render_markdown_timetable(picked: List[Course]) -> str:
@@ -718,7 +811,12 @@ def main() -> None:
         default="",
         help="Prefer to keep lunch free; format HH:MM~HH:MM (example: 12:00~13:00). If set, any overlap is rejected.",
     )
-    ap.add_argument("--format", choices=["md", "ascii", "both"], default="md", help="Timetable output format")
+    ap.add_argument(
+        "--format",
+        choices=["md", "ascii", "both", "day"],
+        default="md",
+        help="Output format: md table, ascii grid, both, or day-wise list",
+    )
     ap.add_argument("--out", help="Write output to a file instead of stdout")
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
@@ -726,6 +824,24 @@ def main() -> None:
         "--fill-ge",
         action="store_true",
         help="If set, fill remaining credits with 교양(교필/선필교/일교/일선) offerings (default: off)",
+    )
+
+    ap.add_argument(
+        "--exclude-taken",
+        action="store_true",
+        help="If set, auto-exclude already taken courses by parsing the cumulative grade page (total_grade.jsp).",
+    )
+    ap.add_argument(
+        "--exclude-code",
+        action="append",
+        default=[],
+        help="Exclude course code (can repeat). Example: --exclude-code Y030007",
+    )
+    ap.add_argument(
+        "--exclude-name",
+        action="append",
+        default=[],
+        help="Exclude course name substring (can repeat). Example: --exclude-name 웹프",
     )
     args = ap.parse_args()
 
@@ -746,6 +862,20 @@ def main() -> None:
         headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX},
     )
     client.get(INDEX)
+
+    taken_codes: List[str] = []
+    if args.exclude_taken:
+        try:
+            taken_codes = fetch_taken_course_codes(client)
+        except Exception:
+            # Best-effort: do not fail recommendation if parsing fails.
+            taken_codes = []
+
+    exclude_codes = {c.strip().upper() for c in (args.exclude_code or []) if c.strip()}
+    exclude_codes |= {c.strip().upper() for c in taken_codes}
+
+    exclude_name_subs = [s.strip() for s in (args.exclude_name or []) if s.strip()]
+
     raw = fetch_offerings(client, term=args.term, code=args.major)
     raw_count = len(raw)
 
@@ -784,6 +914,15 @@ def main() -> None:
         if c.isu
         in {"전필", "전지", "전공필수", "전공지정", "전기", "전선", "교필", "선필교", "일교", "일선"}
     ]
+
+    # Hard exclusions (codes + name substrings)
+    if exclude_codes or exclude_name_subs:
+        def _name_hit(cc: Course) -> bool:
+            n = cc.name or ""
+            return any(sub in n for sub in exclude_name_subs)
+
+        courses = [c for c in courses if c.code.upper() not in exclude_codes and not _name_hit(c)]
+
     bucket_count = len(courses)
 
     # Year handling
@@ -929,6 +1068,14 @@ def main() -> None:
             ge_dedup.setdefault(gc.code, gc)
         ge_courses = list(ge_dedup.values())
 
+        # Apply the same exclusions to GE
+        if exclude_codes or exclude_name_subs:
+            def _name_hit(gc: Course) -> bool:
+                n = gc.name or ""
+                return any(sub in n for sub in exclude_name_subs)
+
+            ge_courses = [c for c in ge_courses if c.code.upper() not in exclude_codes and not _name_hit(c)]
+
         # Rank: 교필 > 선필교 > 일교 > 일선, then prefer not adding new days
         ge_ranked = sorted(ge_courses, key=lambda x: total_score(x), reverse=True)
         try_pick_from(ge_ranked, non_year_penalty=0)
@@ -1004,20 +1151,24 @@ def main() -> None:
         lines.append("- 학번/졸업요건에 따른 교필/선필교 정확한 충족 판정은 추후 졸업요건 데이터 연동으로 보강 예정입니다.")
 
     if not args.no_timetable:
-        if args.format in {"md", "both"}:
+        if args.format == "day":
             lines.append("")
-            lines.append("## 🗓️ 시간표(마크다운, 시간 라벨)")
-            lines.append(render_markdown_timetable(picked))
-            lines.append("")
-            lines.append("- 시간표는 30분 그리드로 렌더링하며, 월/수/목은 75분 패턴을 30분 경계로 스냅한 테이블을 사용합니다.")
+            lines.append("## 🗓️ 요일별 시간표(가독성 우선)")
+            lines.append(render_daywise_schedule(picked))
+        else:
+            if args.format in {"md", "both"}:
+                lines.append("")
+                lines.append("## 🗓️ 시간표(마크다운, 시간 라벨)")
+                lines.append(render_markdown_timetable(picked))
+                lines.append("")
+                lines.append("- 시간표는 30분 그리드로 렌더링하며, 월/수/목은 75분 패턴을 30분 경계로 스냅한 테이블을 사용합니다.")
 
-        if args.format in {"ascii", "both"}:
-            lines.append("")
-            lines.append("## 🗓️ 시간표(ASCII, 교시)")
-            lines.append("```")
-            lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
-            lines.append("```")
-
+            if args.format in {"ascii", "both"}:
+                lines.append("")
+                lines.append("## 🗓️ 시간표(ASCII, 교시)")
+                lines.append("```")
+                lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
+                lines.append("```")
 
     output_text = "\n".join(lines).strip() + "\n"
 

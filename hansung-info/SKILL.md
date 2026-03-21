@@ -70,7 +70,9 @@ bash openclaw/login_refresh.sh
 bash openclaw/recommend_this_term.sh \
   --term 20261 --major Y030 --target 18 \
   --year 2 --max-days 3 \
-  --format md --fill-ge
+  --format md --fill-ge \
+  --exclude-taken \
+  --exclude-name 웹프
 ```
 
 - `--fill-ge`: 남는 학점을 교양으로 채워서 target을 맞춥니다.
