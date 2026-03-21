@@ -450,15 +450,69 @@ def period_to_time_label(period: int) -> str:
 
 
 def slot_to_timerange(s: Slot) -> str:
-    start, _ = period_time(s.start_period)
-    _, end = period_time(s.end_period)
+    """Return HH:MM~HH:MM using the same boundary mapping as conflict checks."""
+
     start_min, end_min = slot_to_minutes(s)
-    # If M modifies boundaries, show exact minutes.
-    if (s.start_suffix or "").upper() == "M" or (s.end_suffix or "").upper() == "M":
-        sh, sm = divmod(start_min, 60)
-        eh, em = divmod(end_min, 60)
-        return f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}"
-    return f"{start}~{end}"
+    sh, sm = divmod(start_min, 60)
+    eh, em = divmod(end_min, 60)
+    return f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}"
+
+
+def render_daywise_schedule(picked: List[Course]) -> str:
+    """Render a day-wise schedule list (best for chat/mobile).
+
+    Output groups by 요일 and prints time ranges + course name.
+    Online/no-slot courses are listed separately.
+    """
+
+    day_order = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+    items_by_day: Dict[str, List[Tuple[int, str, Course, Slot]]] = {d: [] for d in day_order}
+    online: List[Course] = []
+
+    for c in picked:
+        if not c.slots:
+            online.append(c)
+            continue
+        for s in c.slots:
+            if s.day_en not in items_by_day:
+                continue
+            start_min, _end_min = slot_to_minutes(s)
+            items_by_day[s.day_en].append((start_min, slot_to_timerange(s), c, s))
+
+    lines: List[str] = []
+    for d in day_order:
+        items = sorted(items_by_day[d], key=lambda x: x[0])
+        if not items:
+            continue
+        lines.append(f"{DAY_EN_TO_KO.get(d, d)}")
+        for _m, tr, c, s in items:
+            prof = (c.prof or "").strip()
+
+            # Classroom strings often include multiple days/times; for day-wise view, keep it minimal.
+            room = (c.classroom or "").strip()
+            room = re.sub(r"[월화수목금토일]\s*\d+\s*[A-Z]?\s*~\s*\d+\s*[A-Z]?", "", room)
+            room = re.sub(r"\s*,\s*", " ", room)
+            room = re.sub(r"\s+", " ", room).strip(" /|")
+
+            meta = ""
+            if room:
+                meta += f" | {room}"
+            if prof:
+                meta += f" | {prof}"
+
+            lines.append(f"  - {tr}  {c.name} ({c.credit}학점){meta}")
+        lines.append("")
+
+    if online:
+        lines.append("온라인/시간 미표기")
+        for c in online:
+            prof = (c.prof or "").strip()
+            meta = f" | {prof}" if prof else ""
+            lines.append(f"  - {c.name} ({c.credit}학점){meta}")
+        lines.append("")
+
+    return "\n".join(lines).strip() if lines else "(표시할 과목이 없습니다.)"
 
 
 def render_markdown_timetable(picked: List[Course]) -> str:
@@ -757,7 +811,12 @@ def main() -> None:
         default="",
         help="Prefer to keep lunch free; format HH:MM~HH:MM (example: 12:00~13:00). If set, any overlap is rejected.",
     )
-    ap.add_argument("--format", choices=["md", "ascii", "both"], default="md", help="Timetable output format")
+    ap.add_argument(
+        "--format",
+        choices=["md", "ascii", "both", "day"],
+        default="md",
+        help="Output format: md table, ascii grid, both, or day-wise list",
+    )
     ap.add_argument("--out", help="Write output to a file instead of stdout")
     ap.add_argument("--no-timetable", action="store_true", help="Do not print timetable")
     ap.add_argument("--max-period", type=int, default=12, help="Max period rows for ASCII timetable")
@@ -1092,20 +1151,24 @@ def main() -> None:
         lines.append("- 학번/졸업요건에 따른 교필/선필교 정확한 충족 판정은 추후 졸업요건 데이터 연동으로 보강 예정입니다.")
 
     if not args.no_timetable:
-        if args.format in {"md", "both"}:
+        if args.format == "day":
             lines.append("")
-            lines.append("## 🗓️ 시간표(마크다운, 시간 라벨)")
-            lines.append(render_markdown_timetable(picked))
-            lines.append("")
-            lines.append("- 시간표는 30분 그리드로 렌더링하며, 월/수/목은 75분 패턴을 30분 경계로 스냅한 테이블을 사용합니다.")
+            lines.append("## 🗓️ 요일별 시간표(가독성 우선)")
+            lines.append(render_daywise_schedule(picked))
+        else:
+            if args.format in {"md", "both"}:
+                lines.append("")
+                lines.append("## 🗓️ 시간표(마크다운, 시간 라벨)")
+                lines.append(render_markdown_timetable(picked))
+                lines.append("")
+                lines.append("- 시간표는 30분 그리드로 렌더링하며, 월/수/목은 75분 패턴을 30분 경계로 스냅한 테이블을 사용합니다.")
 
-        if args.format in {"ascii", "both"}:
-            lines.append("")
-            lines.append("## 🗓️ 시간표(ASCII, 교시)")
-            lines.append("```")
-            lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
-            lines.append("```")
-
+            if args.format in {"ascii", "both"}:
+                lines.append("")
+                lines.append("## 🗓️ 시간표(ASCII, 교시)")
+                lines.append("```")
+                lines.append(_render_ascii_timetable(picked, max_period=args.max_period))
+                lines.append("```")
 
     output_text = "\n".join(lines).strip() + "\n"
 
