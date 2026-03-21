@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from bs4 import BeautifulSoup
 
+from _session import get_with_auto_refresh
+
 WORKSPACE = pathlib.Path("/home/ubuntu/.openclaw/workspace")
 STATE = WORKSPACE / "secrets" / "hansung_info_storage.json"
 
@@ -45,19 +47,15 @@ def fetch_total_grade_html() -> str:
     if not STATE.exists():
         raise SystemExit("Missing secrets/hansung_info_storage.json (run openclaw/login_refresh.sh)")
 
-    jar = cookies_from_state()
-    with httpx.Client(
-        timeout=30,
-        follow_redirects=True,
-        cookies=jar,
-        headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX},
-    ) as client:
-        client.get(INDEX)
-        r = client.get(TOTAL_GRADE)
+    def _fetch(c: httpx.Client) -> str:
+        r = c.get(TOTAL_GRADE)
         r.raise_for_status()
-        if MARK_LOST in r.text:
-            raise SystemExit("Session expired: please re-login (bash openclaw/login_refresh.sh)")
         return r.text
+
+    html = get_with_auto_refresh(_fetch)
+    if MARK_LOST in html:
+        raise SystemExit("Session expired (auto-refresh failed). Check ~/.openclaw/.env")
+    return html
 
 
 def parse_term_cards(html: str) -> Dict[str, List[Dict[str, Any]]]:

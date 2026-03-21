@@ -10,26 +10,18 @@ Tip:
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 
 import httpx
 from bs4 import BeautifulSoup
 
+from _session import get_with_auto_refresh
+
 WORKSPACE = pathlib.Path("/home/ubuntu/.openclaw/workspace")
 STATE = WORKSPACE / "secrets" / "hansung_info_storage.json"
 
-INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
 GRADE_TOTAL = "https://info.hansung.ac.kr/jsp_21/student/grade/total_grade.jsp?viewMode=oc"
-
-
-def cookies_from_state() -> httpx.Cookies:
-    data = json.loads(STATE.read_text(encoding="utf-8"))
-    jar = httpx.Cookies()
-    for c in data.get("cookies", []):
-        jar.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path") or "/")
-    return jar
 
 
 def extract(html: str):
@@ -60,18 +52,13 @@ def main() -> None:
     if not STATE.exists():
         raise SystemExit("Missing secrets/hansung_info_storage.json")
 
-    jar = cookies_from_state()
-    with httpx.Client(
-        timeout=25,
-        follow_redirects=True,
-        cookies=jar,
-        headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX},
-    ) as client:
-        client.get(INDEX)
-        html = client.get(GRADE_TOTAL).text
+    def _fetch(client: httpx.Client) -> str:
+        return client.get(GRADE_TOTAL).text
+
+    html = get_with_auto_refresh(_fetch)
 
     if "로그인 정보를 잃었습니다" in html:
-        raise SystemExit("Session expired. Run login_refresh.py")
+        raise SystemExit("Session expired (auto-refresh failed). Ensure HANSUNG_INFO_ID/PASSWORD are set in ~/.openclaw/.env")
 
     metrics, buckets = extract(html)
 

@@ -12,6 +12,34 @@ description: "Read-only automation for Hansung Univ 종정시(info.hansung.ac.kr
 - 목표 학점에 맞춰 **충돌 없는 추천 조합** 생성
 - 결과를 **텍스트(ASCII/Markdown) 시간표**로 출력 (디스코드/메모 복붙용)
 
+## 🧭 한성대 관련 작업 지침(중요)
+이 스킬을 설치하면 **기본 동작 원칙**이 아래처럼 고정됩니다: 한성대 데이터가 필요할 때는 **아래 2가지 중 하나로만** 근거를 잡습니다.
+
+1) **한성대 홈페이지(hansung.ac.kr) 크롤링**
+- 대상: 공지/모집/장학/행사/학사일정 등 공개 정보
+- 예: `/home/ubuntu/.openclaw/workspace/scripts/hsu_notice_fetch.py` 같은 방식으로 스냅샷을 만들고, 링크를 근거로 추천/요약
+
+2) **종정시(info.hansung.ac.kr) 로그인 스킬 사용(쿠키 기반)**
+- 대상: 성적/이수/수강내역/개설시간표 등 개인 계정 기반 정보
+- 원칙: read-only, 쿠키 만료 시 `~/.openclaw/.env`로 자동 갱신을 1회 시도
+
+> 즉, “추측”으로 말하지 않고 **홈페이지 원문 링크** 또는 **종정시 조회 결과**를 레퍼런스로 삼습니다.
+
+### 기본 엔트리포인트(권장)
+아래 라우터 스크립트를 쓰면, 작업이 자동으로 **홈페이지 크롤링 vs 종정시 조회**로 분기됩니다.
+
+```bash
+bash skills/hansung-info/openclaw/hsu_ref.sh --help
+
+# 공개정보(공지/장학 등)
+bash skills/hansung-info/openclaw/hsu_ref.sh notice
+bash skills/hansung-info/openclaw/hsu_ref.sh scholarship --max 10
+
+# 개인정보(성적/수강내역 등)
+bash skills/hansung-info/openclaw/hsu_ref.sh grade-summary
+bash skills/hansung-info/openclaw/hsu_ref.sh semester-courses --term 20261
+```
+
 > 원칙: **read-only**. 수강신청/변경 같은 write 작업은 하지 않습니다.
 
 ---
@@ -54,7 +82,10 @@ chmod 600 ~/.openclaw/.env
 
 ### 3) 로그인 쿠키 갱신
 
-**처음 실행 전 반드시 1회** 쿠키를 만들고(또는 만료 시 갱신) 진행합니다.
+**처음 실행 전 1회** 쿠키를 만들고 진행합니다.
+
+- ✅ 이제 주요 스크립트들은 쿠키가 만료되면 **~/.openclaw/.env**의 `HANSUNG_INFO_ID/PASSWORD`를 읽어서 **자동으로 1회 갱신을 시도**합니다.
+- 그래도 실패하면(자격증명 누락/변경 등) 아래 스크립트로 수동 갱신하세요.
 
 ```bash
 cd ~/.openclaw/workspace/skills/hansung-info
@@ -70,9 +101,7 @@ bash openclaw/login_refresh.sh
 bash openclaw/recommend_this_term.sh \
   --term 20261 --major Y030 --target 18 \
   --year 2 --max-days 3 \
-  --format md --fill-ge \
-  --exclude-taken \
-  --exclude-name 웹프
+  --format md --fill-ge
 ```
 
 - `--fill-ge`: 남는 학점을 교양으로 채워서 target을 맞춥니다.

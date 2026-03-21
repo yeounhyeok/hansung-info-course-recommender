@@ -26,6 +26,8 @@ from typing import Dict, List
 
 import httpx
 
+from _session import get_with_auto_refresh
+
 WORKSPACE = pathlib.Path("/home/ubuntu/.openclaw/workspace")
 STATE = WORKSPACE / "secrets" / "hansung_info_storage.json"
 
@@ -76,13 +78,13 @@ def main() -> None:
     ap.add_argument("--only-required", action="store_true", help="only 전필/전공필수-like buckets")
     args = ap.parse_args()
 
-    jar = cookies_from_state()
-    with httpx.Client(timeout=25, follow_redirects=True, cookies=jar, headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX}) as c:
-        c.get(INDEX)
-        xml = c.post(HISTORY, data={"gubun": "history", "syearhakgi": args.term, "sjungong": args.major}).text
+    def _fetch(c: httpx.Client) -> str:
+        return c.post(HISTORY, data={"gubun": "history", "syearhakgi": args.term, "sjungong": args.major}).text
+
+    xml = get_with_auto_refresh(_fetch)
 
     if "로그인 정보를 잃었습니다" in xml:
-        raise SystemExit("Session expired. Run login_refresh.py")
+        raise SystemExit("Session expired (auto-refresh failed). Check ~/.openclaw/.env")
 
     rows = parse_rows(xml)
 

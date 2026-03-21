@@ -26,6 +26,8 @@ from typing import Dict, List
 
 import httpx
 
+from _session import get_with_auto_refresh
+
 WORKSPACE = pathlib.Path("/home/ubuntu/.openclaw/workspace")
 STATE = WORKSPACE / "secrets" / "hansung_info_storage.json"
 INDEX = "https://info.hansung.ac.kr/jsp_21/index.jsp"
@@ -48,7 +50,9 @@ def _get(tag: str, chunk: str) -> str:
 def fetch_jungong_list(client: httpx.Client, *, term: str) -> List[Dict[str, str]]:
     xml = client.post(JUNGONGLIST, data={"syearhakgi": term}).text
     if "로그인 정보를 잃었습니다" in xml:
-        raise SystemExit("Session expired. Run login_refresh.py")
+        raise SystemExit(
+            "Session expired (auto-refresh entrypoint is the caller). Ensure HANSUNG_INFO_ID/PASSWORD are set in ~/.openclaw/.env"
+        )
 
     items = re.findall(r"<item>(.*?)</item>", xml, re.S)
     out: List[Dict[str, str]] = []
@@ -67,16 +71,23 @@ def main() -> None:
     ap.add_argument("--out", help="Write output to a file")
     args = ap.parse_args()
 
-    jar = cookies_from_state()
-    client = httpx.Client(
-        timeout=25,
-        follow_redirects=True,
-        cookies=jar,
-        headers={"User-Agent": "Mozilla/5.0", "Referer": INDEX},
-    )
-    client.get(INDEX)
+    def _fetch(c: httpx.Client) -> str:
+        return c.post(JUNGONGLIST, data={"syearhakgi": str(args.term)}).text
 
-    items = fetch_jungong_list(client, term=str(args.term))
+    xml = get_with_auto_refresh(_fetch)
+    if "로그인 정보를 잃었습니다" in xml:
+        raise SystemExit("Session expired (auto-refresh failed). Check ~/.openclaw/.env")
+
+    # parse
+    items = re.findall(r"<item>(.*?)</item>", xml, re.S)
+    out: List[Dict[str, str]] = []
+    for it in items:
+        code = _get("tcd", it)
+        name = _get("tnm", it)
+        if code and name:
+            out.append({"code": code, "name": name})
+
+    items = out
 
     if args.format == "json":
         text = json.dumps(items, ensure_ascii=False, indent=2) + "\n"

@@ -17,6 +17,8 @@ import pathlib
 
 import requests
 
+from _dotenv import load_dotenv
+
 WORKSPACE = pathlib.Path("/home/ubuntu/.openclaw/workspace")
 OUT = WORKSPACE / "secrets" / "hansung_info_storage.json"
 
@@ -25,6 +27,8 @@ LOGIN_POST = "https://info.hansung.ac.kr/servlet/s_gong.gong_login_ssl"
 
 
 def env(name: str) -> str:
+    # Best-effort load from ~/.openclaw/.env so cookie refresh can be hands-off.
+    load_dotenv()
     v = os.getenv(name)
     if not v:
         raise SystemExit(f"Missing env var: {name}")
